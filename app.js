@@ -599,6 +599,7 @@
 
   const CATEGORIAS_PRODUTO = ['Camisetas', 'Camisas', 'Polos', 'Calças', 'Bermudas', 'Shorts', 'Jaquetas', 'Moletons', 'Vestidos', 'Saias', 'Blusas', 'Calçados', 'Bonés', 'Cintos', 'Meias', 'Cuecas', 'Acessórios', 'Perfumes', 'Outros'];
   const ORIGENS = ['Instagram', 'Viu a loja na rua', 'Indicação', 'WhatsApp', 'TikTok', 'Google', 'Cliente antigo', 'Outros'];
+  const CANAIS = [['Loja física', ic.store], ['Instagram', svg('<rect x="3" y="3" width="18" height="18" rx="5"/><circle cx="12" cy="12" r="4"/><circle cx="17.5" cy="6.5" r="1" fill="currentColor"/>')], ['WhatsApp', ic.chat]];
   const FORMAS = [['Pix', ic.pix], ['Dinheiro', ic.cash], ['Débito', ic.card], ['Crédito', ic.card], ['Crediário', ic.calendar], ['Outro', ic.dots]];
   const CATEGORIAS_DESPESA = ['Aluguel', 'Funcionários e comissões', 'Pró-labore', 'Energia e água', 'Internet e telefone', 'Marketing e anúncios', 'Taxas de cartão e sistema', 'Impostos', 'Embalagens', 'Frete', 'Manutenção', 'Outros'];
 
@@ -727,6 +728,12 @@
         <div><div class="row between small"><span><b>${esc(f.forma)}</b> · ${plural(f.vendas, 'venda', 'vendas')}</span><span class="num">${money(f.total)} · ${pct(f.total / (fat || 1))}</span></div>
         <div class="barra" style="height:6px;margin-top:6px"><i style="width:${(f.total / (fat || 1) * 100).toFixed(1)}%"></i></div></div>`).join('')}</div>`
       : '<p class="muted small">Ainda sem vendas neste mês.</p>'}</div>`;
+    const canais = p.canais || [];
+    if (canais.length) {
+      html += `<div class="card"><h2>Onde vende</h2><div class="stack">${canais.map((c) => `
+        <div><div class="row between small"><span><b>${esc(c.canal)}</b> · ${plural(c.vendas, 'venda', 'vendas')}</span><span class="num">${money(c.total)} · ${pct(c.total / (fat || 1))}</span></div>
+        <div class="barra" style="height:6px;margin-top:6px"><i style="width:${(c.total / (fat || 1) * 100).toFixed(1)}%"></i></div></div>`).join('')}</div></div>`;
+    }
     if ((p.vendedores || []).length > 1) {
       html += `<div class="card"><h2>Vendas por pessoa</h2><div class="lista">${p.vendedores.map((x) => `
         <div class="item" style="cursor:default"><div class="avatar cinza">${esc(iniciais(x.nome))}</div><div class="grow"><div class="tit">${esc(x.nome)}</div><div class="sub">${plural(x.vendas, 'venda', 'vendas')} · ticket ${money(x.total / (x.vendas || 1))}</div></div><b class="num">${money(x.total)}</b></div>`).join('')}</div></div>`;
@@ -1017,13 +1024,17 @@
   function abrirPagamento() {
     if (!S.carrinho.length) return;
     if (folhaCarrinho) { folhaCarrinho.fechar(); folhaCarrinho = null; }
-    const st = { descModo: 'R$', descValor: 0, cliente: null, forma: '', parcelas: 1, recebido: 0, obs: '' };
+    const hojeIso = isoData(new Date());
+    const st = { descModo: 'R$', descValor: 0, cliente: null, forma: '', parcelas: 1, recebido: 0, obs: '', canal: LS.get('canal.' + S.loja.id, 'Loja física'), data: hojeIso };
     const sub = totalCarrinho();
     const desconto = () => Math.min(sub, Math.max(0, st.descModo === '%' ? Math.round(sub * st.descValor) / 100 : st.descValor));
     const total = () => Math.max(0, sub - desconto());
 
     const { folha, fechar } = abrirFolha(`${cabFolha('Pagamento', `${plural(pecasCarrinho(), 'peça', 'peças')} · ${brl(sub)}`)}
       <div class="form" id="pag">
+        <div class="campo"><span>Onde foi a venda</span><div class="pagamentos">${CANAIS.map(([c, i]) => `<button class="pag" type="button" data-canal="${c}">${i}${c}</button>`).join('')}</div></div>
+        <label class="campo"><span>Data da venda</span><input class="input" type="date" id="data-venda" value="${hojeIso}" max="${hojeIso}" min="${isoData(addDias(new Date(), -365))}">
+          <span class="ajuda" id="data-info">Hoje</span></label>
         <div class="campo"><span>Cliente</span><div id="pag-cliente"></div></div>
         <div class="campo"><span>Desconto</span><div class="row"><div class="seg" id="desc-modo"><button type="button" data-m="R$" class="ativo">R$</button><button type="button" data-m="%">%</button></div>
           <input class="input grow" id="desc-valor" inputmode="decimal" placeholder="0"></div><span class="ajuda" id="desc-info"></span></div>
@@ -1049,6 +1060,8 @@
       const conf = $('#confirmar-venda', folha);
       conf.innerHTML = `Confirmar venda · <span class="money">${brl(total())}</span>`;
       $$('[data-forma]', folha).forEach((b) => b.classList.toggle('ativo', b.dataset.forma === st.forma));
+      $$('[data-canal]', folha).forEach((b) => b.classList.toggle('ativo', b.dataset.canal === st.canal));
+      $('#data-info', folha).textContent = st.data === hojeIso ? 'Hoje' : `Venda de ${cap(fmtDiaLongo(dataLocal(st.data)))} (lançada depois)`;
       $('#campo-parcelas', folha).classList.toggle('hidden', st.forma !== 'Crédito');
       $('#campo-troco', folha).classList.toggle('hidden', st.forma !== 'Dinheiro');
       const parc = $('#parcelas', folha);
@@ -1076,6 +1089,8 @@
     });
     $('#desc-valor', folha).addEventListener('input', (e) => { st.descValor = parseMoney(e.target.value); atualizar(); });
     $$('[data-forma]', folha).forEach((b) => b.addEventListener('click', () => { st.forma = b.dataset.forma; $('#pag-erro', folha).classList.add('hidden'); atualizar(); }));
+    $$('[data-canal]', folha).forEach((b) => b.addEventListener('click', () => { st.canal = b.dataset.canal; LS.set('canal.' + S.loja.id, st.canal); atualizar(); }));
+    $('#data-venda', folha).addEventListener('change', (e) => { const v = e.target.value; st.data = v && v <= hojeIso ? v : hojeIso; if (v !== st.data) e.target.value = st.data; atualizar(); });
     $('#parcelas', folha).addEventListener('change', (e) => { st.parcelas = +e.target.value; });
     $('#recebido', folha).addEventListener('input', (e) => { st.recebido = parseMoney(e.target.value); atualizar(); });
     $('#add-obs', folha).addEventListener('click', (e) => { e.target.classList.add('hidden'); $('#campo-obs', folha).classList.remove('hidden'); $('#obs', folha).focus(); });
@@ -1091,7 +1106,9 @@
           const r = await run(sb.rpc('registrar_venda', {
             p_loja: S.loja.id, p_itens: itens, p_forma: st.forma, p_desconto: desconto(),
             p_parcelas: st.forma === 'Crédito' ? st.parcelas : 1, p_cliente: st.cliente ? st.cliente.id : null,
-            p_obs: ($('#obs', folha).value || '').trim() || null
+            p_obs: ($('#obs', folha).value || '').trim() || null,
+            p_data: st.data === hojeIso ? null : (() => { const d = dataLocal(st.data); d.setHours(12, 0, 0, 0); return d.toISOString(); })(),
+            p_canal: st.canal
           }));
           S.carrinho = [];
           salvarCarrinho();
@@ -1099,7 +1116,7 @@
           S.resumoClientes = null;
           S.clientes = null;
           fechar();
-          vendaConcluida(r, carrinhoAntes, { sub, desconto: desconto(), forma: st.forma, parcelas: st.parcelas, cliente: st.cliente });
+          vendaConcluida(r, carrinhoAntes, { sub, desconto: desconto(), forma: st.forma, parcelas: st.parcelas, cliente: st.cliente, canal: st.canal, data: st.data === hojeIso ? null : st.data });
           if (location.hash === '#/vender') rotear();
         } catch (err) { erro.textContent = msgErro(err); erro.classList.remove('hidden'); }
       });
@@ -1115,13 +1132,14 @@
   }
 
   function vendaConcluida(r, itens, t) {
-    const agora = new Date().toISOString();
+    const agora = t.data ? (() => { const d = dataLocal(t.data); d.setHours(12); return d.toISOString(); })() : new Date().toISOString();
     const link = t.cliente && t.cliente.telefone ? waLink(t.cliente.telefone, textoComprovante(r.numero, agora, itens, t)) : null;
     abrirFolha(`<div style="text-align:center;padding:10px 0 4px">
         <div style="width:64px;height:64px;border-radius:22px;background:var(--accent-soft);color:var(--accent-2);display:grid;place-items:center;margin:0 auto 14px">${ic.check.replace('<svg', '<svg style="width:34px;height:34px"')}</div>
         <h2>Venda nº ${r.numero} registrada</h2>
         <div class="meta-num" style="margin:8px 0 2px">${money(r.total)}</div>
-        <p class="muted small">${esc(t.forma)}${t.cliente ? ' · ' + esc(t.cliente.nome) : ' · sem cliente cadastrado'}</p></div>
+        <p class="muted small">${esc(t.canal)} · ${esc(t.forma)}${t.cliente ? ' · ' + esc(t.cliente.nome) : ' · sem cliente cadastrado'}</p>
+        ${t.data ? `<p class="small" style="margin-top:4px"><span class="badge info">Venda de ${fmtDataCurta(dataLocal(t.data))}</span></p>` : ''}</div>
       <div class="stack" style="margin-top:18px">
         ${link ? `<a class="btn bloco" href="${link}" target="_blank" rel="noopener">${ic.chat}Mandar comprovante no WhatsApp</a>` : ''}
         <button class="btn prim bloco grande" type="button" data-fechar>Nova venda</button>
@@ -1178,7 +1196,7 @@
     $$('[data-per]', v).forEach((b) => b.addEventListener('click', () => { location.hash = '#/vendas/' + b.dataset.per; }));
 
     const vendas = await run(sb.from('vendas')
-      .select('id, numero, data, cliente_id, vendedor_nome, subtotal, desconto, total, pecas, forma_pagamento, parcelas, status, observacao, clientes(nome, telefone)')
+      .select('id, numero, data, canal, cliente_id, vendedor_nome, subtotal, desconto, total, pecas, forma_pagamento, parcelas, status, observacao, clientes(nome, telefone)')
       .eq('loja_id', S.loja.id).gte('data', de.toISOString()).lt('data', ate.toISOString())
       .order('data', { ascending: false }));
     if (!vivo(token)) return;
@@ -1205,7 +1223,7 @@
         html += lista.map((x) => `<button class="item" type="button" data-venda="${x.id}">
             <div class="avatar ${x.status === 'cancelada' ? 'cinza' : ''}" style="font-size:12px">nº${x.numero}</div>
             <div class="grow" style="min-width:0"><div class="tit ellipsis">${x.clientes ? esc(x.clientes.nome) : '<span class="muted">Sem cliente cadastrado</span>'}</div>
-              <div class="sub">${fmtHora(x.data)} · ${esc(x.forma_pagamento)}${x.parcelas > 1 ? ` ${x.parcelas}x` : ''} · ${plural(x.pecas, 'peça', 'peças')}${x.vendedor_nome ? ' · ' + esc(x.vendedor_nome) : ''}</div></div>
+              <div class="sub">${fmtHora(x.data)} · ${esc(x.canal || 'Loja física')} · ${esc(x.forma_pagamento)}${x.parcelas > 1 ? ` ${x.parcelas}x` : ''} · ${plural(x.pecas, 'peça', 'peças')}${x.vendedor_nome ? ' · ' + esc(x.vendedor_nome) : ''}</div></div>
             <div class="right">${x.status === 'cancelada' ? '<span class="badge danger">Cancelada</span>' : `<b class="num">${money(x.total)}</b>`}${Number(x.desconto) > 0 && x.status !== 'cancelada' ? `<div class="tiny faint">−${brl(x.desconto)}</div>` : ''}</div></button>`).join('');
         html += '</div>';
       });
@@ -1234,7 +1252,7 @@
         <div class="total-linha"><span class="muted">Subtotal</span><span>${money(venda.subtotal)}</span></div>
         ${Number(venda.desconto) ? `<div class="total-linha"><span class="muted">Desconto</span><span>− ${money(venda.desconto)}</span></div>` : ''}
         <div class="total-linha grande"><span>Total</span><span>${money(venda.total)}</span></div>
-        <div class="small muted" style="margin-top:6px">${esc(venda.forma_pagamento)}${venda.parcelas > 1 ? ` em ${venda.parcelas}x` : ''}${venda.clientes ? ' · ' + esc(venda.clientes.nome) : ''}</div>
+        <div class="small muted" style="margin-top:6px">${esc(venda.canal || 'Loja física')} · ${esc(venda.forma_pagamento)}${venda.parcelas > 1 ? ` em ${venda.parcelas}x` : ''}${venda.clientes ? ' · ' + esc(venda.clientes.nome) : ''}</div>
         ${venda.observacao ? `<div class="small" style="margin-top:6px">${esc(venda.observacao)}</div>` : ''}
       </div>
       <div class="stack" style="margin-top:14px">
@@ -1642,7 +1660,7 @@
     if (!vivo(token)) return;
     const c = clientes.find((x) => x.id === id);
     if (!c) { v.innerHTML = vazioHTML(ic.users, 'Cliente não encontrado', 'Pode ter sido apagado.', '#/clientes', 'Ver clientes'); return; }
-    const vendas = await run(sb.from('vendas').select('id, numero, data, total, pecas, status, forma_pagamento, desconto, subtotal, parcelas, vendedor_nome, observacao, cliente_id')
+    const vendas = await run(sb.from('vendas').select('id, numero, data, canal, total, pecas, status, forma_pagamento, desconto, subtotal, parcelas, vendedor_nome, observacao, cliente_id')
       .eq('cliente_id', c.id).order('data', { ascending: false }).limit(50));
     if (!vivo(token)) return;
     const msg = `Oi, ${primeiroNome(c.nome)}! Aqui é da ${S.loja.nome}. Chegou novidade com a sua cara, quer que eu te mande umas fotos?`;
@@ -1667,7 +1685,7 @@
         ${c.observacao ? `<div style="grid-column:1/-1"><div class="tiny faint">OBSERVAÇÕES</div><div>${esc(c.observacao)}</div></div>` : ''}
       </div></div>
       <div class="card" style="padding:4px 14px"><div class="dia-cab"><span>Compras</span></div>
-        ${vendas.length ? `<div class="lista">${vendas.map((x) => `<button class="item" type="button" data-venda="${x.id}"><div class="grow"><div class="tit">Venda nº ${x.numero}</div><div class="sub">${fmtData(x.data)} · ${esc(x.forma_pagamento)} · ${plural(x.pecas, 'peça', 'peças')}</div></div>
+        ${vendas.length ? `<div class="lista">${vendas.map((x) => `<button class="item" type="button" data-venda="${x.id}"><div class="grow"><div class="tit">Venda nº ${x.numero}</div><div class="sub">${fmtData(x.data)} · ${esc(x.canal || 'Loja física')} · ${esc(x.forma_pagamento)} · ${plural(x.pecas, 'peça', 'peças')}</div></div>
           ${x.status === 'cancelada' ? '<span class="badge danger">Cancelada</span>' : `<b class="num">${money(x.total)}</b>`}</button>`).join('')}</div>` : '<p class="muted small" style="padding:4px 4px 16px">Nenhuma compra registrada.</p>'}
       </div>`;
     $('#editar-cli').addEventListener('click', () => formCliente(c, () => rotear()));
