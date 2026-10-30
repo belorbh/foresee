@@ -142,6 +142,9 @@ create table if not exists public.despesas (
   created_at  timestamptz not null default now()
 );
 
+-- v1.1: canal da venda (loja física, Instagram, WhatsApp)
+alter table public.vendas add column if not exists canal text not null default 'Loja física';
+
 create index if not exists membros_user_idx       on public.membros (user_id);
 create index if not exists produtos_loja_idx      on public.produtos (loja_id);
 create index if not exists variacoes_produto_idx  on public.variacoes (produto_id);
@@ -369,6 +372,9 @@ end $$;
 
 -- ---------- Funções: vendas ------------------------------------------
 
+-- versão antiga (sem data e canal)
+drop function if exists public.registrar_venda(uuid, jsonb, text, numeric, integer, uuid, text);
+
 create or replace function public.registrar_venda(
   p_loja      uuid,
   p_itens     jsonb,
@@ -376,7 +382,9 @@ create or replace function public.registrar_venda(
   p_desconto  numeric default 0,
   p_parcelas  integer default 1,
   p_cliente   uuid default null,
-  p_obs       text default null
+  p_obs       text default null,
+  p_data      timestamptz default null,
+  p_canal     text default null
 ) returns jsonb language plpgsql security definer set search_path = public as $$
 declare
   v_uid       uuid := auth.uid();
@@ -392,8 +400,12 @@ declare
   v_pecas     integer := 0;
   v_desc      numeric(12,2) := round(coalesce(p_desconto, 0), 2);
   v_saldo     integer;
+  v_data      timestamptz := coalesce(p_data, now());
+  v_canal     text := coalesce(nullif(trim(p_canal), ''), 'Loja física');
 begin
   if v_uid is null then raise exception 'Faça login novamente.'; end if;
+  if v_data > now() + interval '10 minutes' then raise exception 'A data da venda não pode ser no futuro.'; end if;
+  if v_data < now() - interval '1 year' then raise exception 'A data da venda é muito antiga.'; end if;
   select nome into v_nome from membros where loja_id = p_loja and user_id = v_uid;
   if not found then raise exception 'Sem acesso a esta loja.'; end if;
   if p_itens is null or jsonb_typeof(p_itens) <> 'array' or jsonb_array_length(p_itens) = 0 then
@@ -407,8 +419,8 @@ begin
   perform 1 from lojas where id = p_loja for update;   -- numeração sem repetir
   select coalesce(max(numero), 0) + 1 into v_numero from vendas where loja_id = p_loja;
 
-  insert into vendas (loja_id, numero, cliente_id, vendedor_id, vendedor_nome, forma_pagamento, parcelas, observacao)
-    values (p_loja, v_numero, p_cliente, v_uid, v_nome, trim(p_forma),
+  insert into vendas (loja_id, numero, data, canal, cliente_id, vendedor_id, vendedor_nome, forma_pagamento, parcelas, observacao)
+    values (p_loja, v_numero, v_data, v_canal, p_cliente, v_uid, v_nome, trim(p_forma),
             greatest(coalesce(p_parcelas, 1), 1), nullif(trim(p_obs), ''))
     returning id into v_venda;
 
@@ -496,6 +508,7 @@ declare
   v_desp    jsonb;
   v_est     jsonb;
   v_par     jsonb;
+  v_canais  jsonb;
 begin
   if not eh_membro(p_loja) then raise exception 'Sem acesso a esta loja.'; end if;
   v_dono := eh_dono(p_loja);
@@ -530,6 +543,12 @@ begin
     from (select forma_pagamento, sum(total) as total, count(*) as n
             from vendas where loja_id = p_loja and status = 'concluida' and data >= p_inicio and data < p_fim
            group by 1) f;
+
+  select coalesce(jsonb_agg(jsonb_build_object('canal', canal, 'total', total, 'vendas', n) order by total desc), '[]'::jsonb)
+    into v_canais
+    from (select canal, sum(total) as total, count(*) as n
+            from vendas where loja_id = p_loja and status = 'concluida' and data >= p_inicio and data < p_fim
+           group by 1) c;
 
   select coalesce(jsonb_agg(jsonb_build_object('nome', nome, 'total', total, 'vendas', n) order by total desc), '[]'::jsonb)
     into v_vend
@@ -596,7 +615,8 @@ begin
 
   return jsonb_build_object('dono', v_dono, 'mes', v_mes, 'anterior', v_ant, 'hoje', v_hoje,
                             'dias', v_dias, 'formas', v_formas, 'vendedores', v_vend, 'top', v_top,
-                            'despesas', v_desp, 'estoque', v_est, 'parados', v_par);
+                            'despesas', v_desp, 'estoque', v_est, 'parados', v_par,
+                            'canais', v_canais);
 end $$;
 
 create or replace function public.clientes_resumo(p_loja uuid)
