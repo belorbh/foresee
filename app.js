@@ -391,7 +391,7 @@
 
   function usarLoja(m) {
     S.m = m; S.loja = m.lojas; S.papel = m.papel;
-    S.produtos = null; S.clientes = null; S.resumoClientes = null;
+    S.produtos = null; S.clientes = null; S.resumoClientes = null; S.vendedores = null;
     S.carrinho = LS.get('carrinho.' + m.loja_id, []);
     LS.set('loja', m.loja_id);
   }
@@ -584,6 +584,12 @@
     return S.produtos;
   }
 
+  async function carregarVendedores(forcar) {
+    if (S.vendedores && !forcar) return S.vendedores;
+    S.vendedores = await run(sb.from('vendedores').select('id, nome, comissao_pct, ativo').eq('loja_id', S.loja.id).order('nome'));
+    return S.vendedores;
+  }
+
   async function carregarClientes(forcar) {
     if (S.clientes && S.resumoClientes && !forcar) return S.clientes;
     const [lista, resumo] = await Promise.all([
@@ -620,6 +626,7 @@
     const diaAnt = Math.min(agora.getDate(), diasNoMes(iniAnt));
     const fimAnt = new Date(iniAnt.getFullYear(), iniAnt.getMonth(), diaAnt, agora.getHours(), agora.getMinutes(), agora.getSeconds());
     const tz = (Intl.DateTimeFormat().resolvedOptions().timeZone) || 'America/Sao_Paulo';
+    if (dono()) { try { await run(sb.rpc('gerar_despesas_fixas', { p_loja: S.loja.id, p_mes: isoData(ini) })); } catch (e) { /* segue */ } }
     const p = await run(sb.rpc('painel', {
       p_loja: S.loja.id, p_tz: tz, p_hoje: hoje.toISOString(), p_inicio: ini.toISOString(), p_fim: fim.toISOString(),
       p_inicio_ant: iniAnt.toISOString(), p_fim_ant: fimAnt.toISOString()
@@ -692,14 +699,16 @@
     if (dono()) {
       const cmv = Number(m.custo) || 0;
       const desp = p.despesas ? Number(p.despesas.total) || 0 : 0;
+      const com = Number(m.comissao) || 0;
       const bruto = fat - cmv;
-      const liquido = bruto - desp;
-      const base = Math.max(fat, cmv + desp, 1);
+      const liquido = bruto - desp - com;
+      const base = Math.max(fat, cmv + desp + com, 1);
       html += `<div class="card"><h2>${ic.wallet.replace('<svg', '<svg style="width:20px;height:20px"')} Lucro do mês <a class="acao" href="#/despesas">Despesas</a></h2>
         <div class="cascata">
           <div class="linha"><span>Vendas</span><b class="num">${money(fat)}</b><div class="barra"><i style="width:${(fat / base * 100).toFixed(1)}%"></i></div></div>
           <div class="linha"><span class="muted">− Custo das peças vendidas</span><span class="num">${money(cmv)}</span><div class="barra warn"><i style="width:${(cmv / base * 100).toFixed(1)}%"></i></div></div>
           <div class="linha"><span class="muted">− Despesas da loja</span><span class="num">${money(desp)}</span><div class="barra danger"><i style="width:${(desp / base * 100).toFixed(1)}%"></i></div></div>
+          ${com ? `<div class="linha"><span class="muted">− Comissões dos vendedores</span><span class="num">${money(com)}</span><div class="barra danger"><i style="width:${(com / base * 100).toFixed(1)}%"></i></div></div>` : ''}
           <div class="linha total"><span>${liquido >= 0 ? 'Lucro' : 'Prejuízo'}</span><span class="num ${liquido >= 0 ? 'up' : 'down'}">${money(liquido)}</span></div>
         </div>
         <p class="small faint" style="margin-top:8px">${fat ? `${Math.abs(liquido / fat) <= 1 ? `Margem líquida de ${pct(liquido / fat)} · ` : ''}margem bruta de ${pct(bruto / fat)}` : 'Os números aparecem com as vendas.'}${!desp ? ' · <a href="#/despesas">lance as despesas</a> para ver o lucro real' : ''}</p></div>`;
@@ -734,9 +743,9 @@
         <div><div class="row between small"><span><b>${esc(c.canal)}</b> · ${plural(c.vendas, 'venda', 'vendas')}</span><span class="num">${money(c.total)} · ${pct(c.total / (fat || 1))}</span></div>
         <div class="barra" style="height:6px;margin-top:6px"><i style="width:${(c.total / (fat || 1) * 100).toFixed(1)}%"></i></div></div>`).join('')}</div></div>`;
     }
-    if ((p.vendedores || []).length > 1) {
+    if ((p.vendedores || []).length > 1 || (p.vendedores || []).some((x) => x.comissao)) {
       html += `<div class="card"><h2>Vendas por pessoa</h2><div class="lista">${p.vendedores.map((x) => `
-        <div class="item" style="cursor:default"><div class="avatar cinza">${esc(iniciais(x.nome))}</div><div class="grow"><div class="tit">${esc(x.nome)}</div><div class="sub">${plural(x.vendas, 'venda', 'vendas')} · ticket ${money(x.total / (x.vendas || 1))}</div></div><b class="num">${money(x.total)}</b></div>`).join('')}</div></div>`;
+        <div class="item" style="cursor:default"><div class="avatar cinza">${esc(iniciais(x.nome))}</div><div class="grow"><div class="tit">${esc(x.nome)}</div><div class="sub">${plural(x.vendas, 'venda', 'vendas')} · ticket ${money(x.total / (x.vendas || 1))}${x.comissao ? ` · comissão ${money(x.comissao)}` : ''}</div></div><b class="num">${money(x.total)}</b></div>`).join('')}</div></div>`;
     }
     const e = p.estoque;
     html += `<div class="card"><h2>${ic.box.replace('<svg', '<svg style="width:20px;height:20px"')} Estoque <a class="acao" href="#/produtos">Ver</a></h2>
@@ -791,7 +800,8 @@
       const cmv = Number(m.custo) || 0;
       const desp = p.despesas ? Number(p.despesas.total) || 0 : 0;
       const projFat = (fat / ctx.diaHoje) * ctx.nDias;
-      const projLucro = projFat - (cmv / fat) * projFat - desp;
+      const com = Number(m.comissao) || 0;
+      const projLucro = projFat - ((cmv + com) / fat) * projFat - desp;
       if (desp > 0 && projLucro < 0) {
         add('danger', ic.alert, 'O mês caminha para prejuízo', `No ritmo atual, as vendas não cobrem o custo das peças e as despesas. Faltariam ${money(-projLucro)} no fim do mês.`, '#/despesas', 'Ver despesas');
       }
@@ -1025,7 +1035,7 @@
     if (!S.carrinho.length) return;
     if (folhaCarrinho) { folhaCarrinho.fechar(); folhaCarrinho = null; }
     const hojeIso = isoData(new Date());
-    const st = { descModo: 'R$', descValor: 0, cliente: null, forma: '', parcelas: 1, recebido: 0, obs: '', canal: LS.get('canal.' + S.loja.id, 'Loja física'), data: hojeIso };
+    const st = { descModo: 'R$', descValor: 0, cliente: null, forma: '', parcelas: 1, recebido: 0, obs: '', canal: LS.get('canal.' + S.loja.id, 'Loja física'), data: hojeIso, vendedor: null };
     const sub = totalCarrinho();
     const desconto = () => Math.min(sub, Math.max(0, st.descModo === '%' ? Math.round(sub * st.descValor) / 100 : st.descValor));
     const total = () => Math.max(0, sub - desconto());
@@ -1035,6 +1045,7 @@
         <div class="campo"><span>Onde foi a venda</span><div class="pagamentos">${CANAIS.map(([c, i]) => `<button class="pag" type="button" data-canal="${c}">${i}${c}</button>`).join('')}</div></div>
         <label class="campo"><span>Data da venda</span><input class="input" type="date" id="data-venda" value="${hojeIso}" max="${hojeIso}" min="${isoData(addDias(new Date(), -365))}">
           <span class="ajuda" id="data-info">Hoje</span></label>
+        <div class="campo hidden" id="campo-vendedor"><span>Vendedor</span><div class="chips" id="pag-vendedores"></div></div>
         <div class="campo"><span>Cliente</span><div id="pag-cliente"></div></div>
         <div class="campo"><span>Desconto</span><div class="row"><div class="seg" id="desc-modo"><button type="button" data-m="R$" class="ativo">R$</button><button type="button" data-m="%">%</button></div>
           <input class="input grow" id="desc-valor" inputmode="decimal" placeholder="0"></div><span class="ajuda" id="desc-info"></span></div>
@@ -1079,6 +1090,24 @@
       $('#cli-trocar', folha).addEventListener('click', () => escolherCliente((c) => { st.cliente = c; desenharCliente(); }));
     };
     desenharCliente();
+    carregarVendedores().then((vs) => {
+      const ativos = (vs || []).filter((x) => x.ativo);
+      if (!ativos.length || !$('#pag-vendedores', folha)) return;
+      const ultimo = LS.get('vendedor.' + S.loja.id, null);
+      st.vendedor = ativos.some((x) => x.id === ultimo) ? ultimo : null;
+      const desenhar = () => {
+        $('#pag-vendedores', folha).innerHTML = [{ id: null, nome: 'Sem vendedor' }, ...ativos].map((x) => `<button class="chip ${x.id === st.vendedor ? 'ativo' : ''}" type="button" data-vend="${x.id || ''}">${esc(x.nome)}${x.comissao_pct ? ` <span class="x">${n1(x.comissao_pct)}%</span>` : ''}</button>`).join('');
+      };
+      desenhar();
+      $('#campo-vendedor', folha).classList.remove('hidden');
+      $('#pag-vendedores', folha).addEventListener('click', (e) => {
+        const b = e.target.closest('[data-vend]');
+        if (!b) return;
+        st.vendedor = b.dataset.vend || null;
+        LS.set('vendedor.' + S.loja.id, st.vendedor);
+        desenhar();
+      });
+    }).catch(() => {});
     $('#desc-modo', folha).addEventListener('click', (e) => {
       const b = e.target.closest('[data-m]');
       if (!b) return;
@@ -1108,7 +1137,8 @@
             p_parcelas: st.forma === 'Crédito' ? st.parcelas : 1, p_cliente: st.cliente ? st.cliente.id : null,
             p_obs: ($('#obs', folha).value || '').trim() || null,
             p_data: st.data === hojeIso ? null : (() => { const d = dataLocal(st.data); d.setHours(12, 0, 0, 0); return d.toISOString(); })(),
-            p_canal: st.canal
+            p_canal: st.canal,
+            p_vendedor: st.vendedor
           }));
           S.carrinho = [];
           salvarCarrinho();
@@ -1196,7 +1226,7 @@
     $$('[data-per]', v).forEach((b) => b.addEventListener('click', () => { location.hash = '#/vendas/' + b.dataset.per; }));
 
     const vendas = await run(sb.from('vendas')
-      .select('id, numero, data, canal, cliente_id, vendedor_nome, subtotal, desconto, total, pecas, forma_pagamento, parcelas, status, observacao, clientes(nome, telefone)')
+      .select('id, numero, data, canal, cliente_id, vendedor_nome, vendedor_cad_id, comissao, subtotal, desconto, total, pecas, forma_pagamento, parcelas, status, observacao, clientes(nome, telefone)')
       .eq('loja_id', S.loja.id).gte('data', de.toISOString()).lt('data', ate.toISOString())
       .order('data', { ascending: false }));
     if (!vivo(token)) return;
@@ -1258,10 +1288,33 @@
       <div class="stack" style="margin-top:14px">
         ${link ? `<a class="btn bloco" href="${link}" target="_blank" rel="noopener">${ic.chat}Mandar comprovante no WhatsApp</a>` : ''}
         ${venda.cliente_id ? `<a class="btn bloco" href="#/cliente/${venda.cliente_id}" id="ver-cli">${ic.users}Ver cliente</a>` : ''}
+        ${dono() && venda.status === 'concluida' ? `<button class="btn bloco" type="button" id="trocar-vend">${ic.users}${venda.vendedor_cad_id ? `Vendedor: ${esc(venda.vendedor_nome)} · comissão ${brl(venda.comissao)} (trocar)` : 'Definir vendedor (comissão)'}</button>` : ''}
         ${dono() && venda.status === 'concluida' ? `<button class="btn perigo bloco" type="button" id="cancelar-venda">${ic.x}Cancelar venda</button>` : ''}
       </div>`;
     const verCli = $('#ver-cli', box);
     if (verCli) verCli.addEventListener('click', fechar);
+    const tv = $('#trocar-vend', box);
+    if (tv) tv.addEventListener('click', async () => {
+      let vs;
+      try { vs = (await carregarVendedores()).filter((x) => x.ativo || x.id === venda.vendedor_cad_id); } catch (e) { toast(msgErro(e), 'erro'); return; }
+      if (!vs.length) { toast('Cadastre os vendedores em Loja e equipe.', 'erro'); return; }
+      abrirFolha(`${cabFolha('Vendedor desta venda', `Venda nº ${venda.numero} · ${brl(venda.total)}`)}
+        <div class="lista">${[{ id: null, nome: 'Sem vendedor', comissao_pct: 0 }, ...vs].map((x) => `<button class="item" type="button" data-v="${x.id || ''}">
+          <div class="avatar cinza">${esc(iniciais(x.nome))}</div><div class="grow"><div class="tit">${esc(x.nome)}</div>
+          <div class="sub">${x.id ? `${n1(x.comissao_pct)}% · comissão ${brl(Math.round(venda.total * x.comissao_pct) / 100)}` : 'sem comissão'}</div></div>
+          ${(x.id || null) === (venda.vendedor_cad_id || null) ? '<span class="badge ok">Atual</span>' : ''}</button>`).join('')}</div>`, {
+        aoAbrir: (f2, fechar2) => {
+          $$('[data-v]', f2).forEach((b) => b.addEventListener('click', async () => {
+            try {
+              await run(sb.rpc('definir_vendedor_venda', { p_venda: venda.id, p_vendedor: b.dataset.v || null }));
+              fechar2(); fechar();
+              toast('Vendedor atualizado.');
+              rotear();
+            } catch (err) { toast(msgErro(err), 'erro'); }
+          }));
+        }
+      });
+    });
     const canc = $('#cancelar-venda', box);
     if (canc) canc.addEventListener('click', async () => {
       const motivo = await pedirTexto('Cancelar a venda?', 'As peças voltam para o estoque. Escreva o motivo (opcional).', 'Ex.: cliente desistiu', 'Cancelar venda', true);
@@ -1660,7 +1713,7 @@
     if (!vivo(token)) return;
     const c = clientes.find((x) => x.id === id);
     if (!c) { v.innerHTML = vazioHTML(ic.users, 'Cliente não encontrado', 'Pode ter sido apagado.', '#/clientes', 'Ver clientes'); return; }
-    const vendas = await run(sb.from('vendas').select('id, numero, data, canal, total, pecas, status, forma_pagamento, desconto, subtotal, parcelas, vendedor_nome, observacao, cliente_id')
+    const vendas = await run(sb.from('vendas').select('id, numero, data, canal, total, pecas, status, forma_pagamento, desconto, subtotal, parcelas, vendedor_nome, vendedor_cad_id, comissao, observacao, cliente_id')
       .eq('cliente_id', c.id).order('data', { ascending: false }).limit(50));
     if (!vivo(token)) return;
     const msg = `Oi, ${primeiroNome(c.nome)}! Aqui é da ${S.loja.nome}. Chegou novidade com a sua cara, quer que eu te mande umas fotos?`;
@@ -1762,91 +1815,114 @@
         <a class="icon-btn" href="#/despesas/${chaveMes(inicioMes(ref, 1))}" aria-label="Próximo mês">${ic.chevRight}</a></div>
       <div id="desp-conteudo">${carregandoHTML()}</div>`;
     $('#nova-desp').addEventListener('click', () => formDespesa(null, ref));
-    const [lista, anteriores] = await Promise.all([
+    try { await run(sb.rpc('gerar_despesas_fixas', { p_loja: S.loja.id, p_mes: isoData(de) })); } catch (e) { /* segue mesmo assim */ }
+    if (!vivo(token)) return;
+    const [lista, vendasMes] = await Promise.all([
       run(sb.from('despesas').select('*').eq('loja_id', S.loja.id).gte('data', isoData(de)).lt('data', isoData(ate)).order('data', { ascending: false })),
-      run(sb.from('despesas').select('*').eq('loja_id', S.loja.id).eq('tipo', 'fixa').gte('data', isoData(inicioMes(ref, -1))).lt('data', isoData(de)))
+      run(sb.from('vendas').select('vendedor_nome, vendedor_cad_id, total, comissao').eq('loja_id', S.loja.id).eq('status', 'concluida').gte('data', de.toISOString()).lt('data', ate.toISOString()))
     ]);
     if (!vivo(token)) return;
     const total = lista.reduce((s, x) => s + Number(x.valor), 0);
     const fixas = lista.filter((x) => x.tipo === 'fixa').reduce((s, x) => s + Number(x.valor), 0);
+    const porVend = {};
+    vendasMes.filter((x) => x.vendedor_cad_id).forEach((x) => {
+      const k = x.vendedor_nome || '—';
+      porVend[k] = porVend[k] || { vendas: 0, total: 0, comissao: 0 };
+      porVend[k].vendas += 1; porVend[k].total += Number(x.total); porVend[k].comissao += Number(x.comissao);
+    });
+    const vends = Object.entries(porVend).sort((a, b) => b[1].comissao - a[1].comissao);
+    const totalCom = vends.reduce((s, [, x]) => s + x.comissao, 0);
     const porCat = {};
     lista.forEach((x) => { porCat[x.categoria] = (porCat[x.categoria] || 0) + Number(x.valor); });
     const cats = Object.entries(porCat).sort((a, b) => b[1] - a[1]);
-    const podeCopiar = anteriores.length && !lista.some((x) => x.tipo === 'fixa');
     let html = `<div class="grid k4" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr))">
-        <div class="card kpi destaque"><div class="rotulo">Total do mês</div><div class="valor">${money(total)}</div><div class="det">${plural(lista.length, 'lançamento', 'lançamentos')}</div></div>
-        <div class="card kpi"><div class="rotulo">Fixas</div><div class="valor">${money(fixas)}</div><div class="det">aluguel, salários…</div></div>
-        <div class="card kpi"><div class="rotulo">Variáveis</div><div class="valor">${money(total - fixas)}</div></div></div>`;
-    if (podeCopiar) {
-      html += `<div class="insight info" style="margin-top:12px"><div class="ic">${ic.copy}</div><div><b>Repetir as despesas fixas do mês passado?</b><p>${plural(anteriores.length, 'despesa fixa', 'despesas fixas')} somando ${money(anteriores.reduce((s, x) => s + Number(x.valor), 0))}.</p>
-        <button class="btn peq" type="button" id="copiar-fixas" style="margin-top:8px">Repetir neste mês</button></div></div>`;
-    }
+        <div class="card kpi destaque"><div class="rotulo">Total do mês</div><div class="valor">${money(total + totalCom)}</div><div class="det">despesas${totalCom ? ' + comissões' : ''}</div></div>
+        <div class="card kpi"><div class="rotulo">Fixas</div><div class="valor">${money(fixas)}</div><div class="det">repetem todo mês</div></div>
+        <div class="card kpi"><div class="rotulo">Variáveis</div><div class="valor">${money(total - fixas)}</div></div>
+        <div class="card kpi"><div class="rotulo">Comissões</div><div class="valor">${money(totalCom)}</div><div class="det">dos vendedores</div></div></div>`;
+    html += `<div class="card" style="margin-top:12px"><h2>${ic.users.replace('<svg', '<svg style="width:20px;height:20px"')} Comissão dos vendedores <a class="acao" href="#/ajustes">Vendedores</a></h2>
+      ${vends.length ? `<div class="lista">${vends.map(([nome, x]) => `<div class="item" style="cursor:default"><div class="avatar cinza">${esc(iniciais(nome))}</div>
+        <div class="grow"><div class="tit">${esc(nome)}</div><div class="sub">${plural(x.vendas, 'venda', 'vendas')} · vendeu ${money(x.total)}</div></div>
+        <div class="right"><b class="num">${money(x.comissao)}</b><div class="tiny faint">a pagar</div></div></div>`).join('')}</div>`
+        : '<p class="small muted">Nenhuma venda com vendedor neste mês. Cadastre os vendedores e a % de comissão em <a href="#/ajustes">Loja e equipe</a> e escolha o vendedor na hora da venda.</p>'}</div>`;
     if (cats.length) {
       html += `<div class="card" style="margin-top:12px"><h2>Para onde vai o dinheiro</h2><div class="stack">${cats.map(([cat, val]) => `
         <div><div class="row between small"><b>${esc(cat)}</b><span class="num">${money(val)} · ${pct(val / total)}</span></div><div class="barra danger" style="height:6px;margin-top:6px"><i style="width:${(val / total * 100).toFixed(1)}%"></i></div></div>`).join('')}</div></div>`;
     }
-    html += `<p class="small muted" style="margin:14px 2px">Compra de mercadoria não entra aqui: o custo da peça já desconta do lucro quando ela é vendida.</p>`;
+    html += `<p class="small muted" style="margin:14px 2px">Despesa marcada para repetir aparece sozinha nos meses seguintes. Compra de mercadoria não entra aqui: o custo da peça já desconta do lucro quando ela é vendida.</p>`;
     html += lista.length ? `<div class="card" style="padding:4px 14px"><div class="lista">${lista.map((x) => `<button class="item" type="button" data-desp="${x.id}">
         <div class="avatar cinza">${ic.wallet.replace('<svg', '<svg style="width:18px;height:18px"')}</div>
-        <div class="grow" style="min-width:0"><div class="tit ellipsis">${esc(x.descricao)}</div><div class="sub">${esc(x.categoria)} · ${fmtDataCurta(dataLocal(x.data))}${x.tipo === 'fixa' ? ' · fixa' : ''}</div></div>
+        <div class="grow" style="min-width:0"><div class="tit ellipsis">${esc(x.descricao)}</div><div class="sub">${esc(x.categoria)} · ${fmtDataCurta(dataLocal(x.data))}${x.modelo_id ? ' · <span class="badge info">repete todo mês</span>' : x.tipo === 'fixa' ? ' · fixa' : ''}</div></div>
         <b class="num">${money(x.valor)}</b></button>`).join('')}</div></div>`
       : vazioHTML(ic.wallet, 'Nenhuma despesa neste mês', 'Lance aluguel, luz, internet, salários e outras contas para ver o lucro real.', null, '');
     $('#desp-conteudo').innerHTML = html;
     $$('[data-desp]').forEach((b) => b.addEventListener('click', () => formDespesa(lista.find((x) => x.id === b.dataset.desp), ref)));
-    const copiar = $('#copiar-fixas');
-    if (copiar) copiar.addEventListener('click', () => ocupado(copiar, async () => {
-      try {
-        const novas = anteriores.map((x) => {
-          const d = dataLocal(x.data);
-          const dia = Math.min(d.getDate(), diasNoMes(ref));
-          return { loja_id: S.loja.id, descricao: x.descricao, categoria: x.categoria, valor: x.valor, tipo: 'fixa', data: isoData(new Date(ref.getFullYear(), ref.getMonth(), dia)) };
-        });
-        await run(sb.from('despesas').insert(novas));
-        toast('Despesas fixas repetidas.');
-        rotear();
-      } catch (err) { toast(msgErro(err), 'erro'); }
-    }));
   };
 
   function formDespesa(d, ref) {
     const hoje = new Date();
     const dataPadrao = d ? String(d.data).slice(0, 10) : (ref && (ref.getMonth() !== hoje.getMonth() || ref.getFullYear() !== hoje.getFullYear()) ? isoData(ref) : isoData(hoje));
+    const fixasPorPadrao = ['Aluguel', 'Funcionários e comissões', 'Pró-labore', 'Internet e telefone', 'Energia e água'];
+    const recorrente = d && d.modelo_id;
+    const caixa = (id, texto, ajuda, marcado) => `<label class="check-row"><input type="checkbox" id="${id}" ${marcado ? 'checked' : ''}><span><b>${texto}</b>${ajuda ? `<small>${ajuda}</small>` : ''}</span></label>`;
     abrirFolha(`${cabFolha(d ? 'Editar despesa' : 'Lançar despesa')}
       <form class="form" id="f-desp" novalidate>
         <label class="campo"><span>Valor</span><div class="prefix"><b>R$</b><input class="input grande" name="valor" inputmode="decimal" value="${d ? moneyInput(d.valor) : ''}" placeholder="0,00" autofocus></div></label>
-        <label class="campo"><span>Descrição</span><input class="input" name="descricao" value="${esc(d ? d.descricao : '')}" placeholder="Ex.: Aluguel de outubro"></label>
+        <label class="campo"><span>Descrição</span><input class="input" name="descricao" value="${esc(d ? d.descricao : '')}" placeholder="Ex.: Aluguel da loja"></label>
         <label class="campo"><span>Categoria</span><select class="input" name="categoria">${CATEGORIAS_DESPESA.map((c) => `<option ${d && d.categoria === c ? 'selected' : ''}>${c}</option>`).join('')}</select></label>
-        <div class="duo"><label class="campo"><span>Data</span><input class="input" name="data" type="date" value="${dataPadrao}"></label>
-          <label class="campo"><span>Tipo</span><select class="input" name="tipo"><option value="variavel" ${d && d.tipo === 'variavel' ? 'selected' : ''}>Variável</option><option value="fixa" ${d && d.tipo === 'fixa' ? 'selected' : ''}>Fixa (todo mês)</option></select></label></div>
+        <label class="campo"><span>Data</span><input class="input" name="data" type="date" value="${dataPadrao}" ${recorrente ? 'disabled' : ''}></label>
+        ${!d ? caixa('repetir', 'Repetir todo mês (despesa fixa)', 'Lança sozinha nos meses seguintes, no mesmo dia. Dá para mudar o valor ou parar quando quiser.', true)
+          : recorrente ? `<p class="badge info" style="justify-self:start">Repete todo mês</p>${caixa('proximos', 'Aplicar a mudança também nos próximos meses', '', true)}`
+          : caixa('repetir', 'Repetir todo mês a partir deste', 'Vira despesa fixa e aparece sozinha nos meses seguintes.', false)}
         <p class="erro-msg hidden" id="desp-erro"></p>
         <button class="btn prim bloco grande" type="submit">${d ? 'Salvar' : 'Lançar despesa'}</button>
-        ${d ? `<button class="btn perigo bloco" type="button" id="apagar-desp">${ic.trash}Apagar</button>` : ''}
+        ${recorrente ? `<button class="btn bloco" type="button" id="parar-desp">Parar de repetir depois deste mês</button>` : ''}
+        ${d ? `<button class="btn perigo bloco" type="button" id="apagar-desp">${ic.trash}Apagar${recorrente ? ' só deste mês' : ''}</button>` : ''}
       </form>`, {
       aoAbrir: (f, fechar) => {
         const form = $('#f-desp', f);
-        const fixasPorPadrao = ['Aluguel', 'Funcionários e comissões', 'Pró-labore', 'Internet e telefone'];
-        form.categoria.addEventListener('change', () => { if (!d) form.tipo.value = fixasPorPadrao.includes(form.categoria.value) ? 'fixa' : 'variavel'; });
-        if (!d) form.tipo.value = fixasPorPadrao.includes(form.categoria.value) ? 'fixa' : 'variavel';
+        const rep = $('#repetir', f);
+        if (!d && rep) {
+          const ajustar = () => { rep.checked = fixasPorPadrao.includes(form.categoria.value); };
+          ajustar();
+          form.categoria.addEventListener('change', ajustar);
+        }
         form.addEventListener('submit', async (e) => {
           e.preventDefault();
           const erro = $('#desp-erro', f);
           const valor = parseMoney(form.valor.value);
           if (!valor) { erro.textContent = 'Digite o valor.'; erro.classList.remove('hidden'); return; }
-          if (!form.data.value) { erro.textContent = 'Escolha a data.'; erro.classList.remove('hidden'); return; }
-          const dados = { valor, descricao: form.descricao.value.trim() || form.categoria.value, categoria: form.categoria.value, data: form.data.value, tipo: form.tipo.value };
+          if (!recorrente && !form.data.value) { erro.textContent = 'Escolha a data.'; erro.classList.remove('hidden'); return; }
+          const descricao = form.descricao.value.trim() || form.categoria.value;
           await ocupado(form.querySelector('button[type=submit]'), async () => {
             try {
-              if (d) await run(sb.from('despesas').update(dados).eq('id', d.id));
-              else await run(sb.from('despesas').insert(Object.assign({ loja_id: S.loja.id }, dados)));
+              if (!d && rep && rep.checked) {
+                await run(sb.rpc('criar_despesa_fixa', { p_loja: S.loja.id, p_descricao: descricao, p_categoria: form.categoria.value, p_valor: valor, p_data: form.data.value }));
+                toast('Despesa fixa lançada. Ela aparece sozinha nos próximos meses.');
+              } else if (!d) {
+                await run(sb.from('despesas').insert({ loja_id: S.loja.id, valor, descricao, categoria: form.categoria.value, data: form.data.value, tipo: 'variavel' }));
+                toast('Despesa lançada.');
+              } else {
+                const dados = { valor, descricao, categoria: form.categoria.value };
+                if (!recorrente) dados.data = form.data.value;
+                await run(sb.from('despesas').update(dados).eq('id', d.id));
+                if (recorrente && $('#proximos', f).checked) await run(sb.rpc('atualizar_despesa_fixa', { p_despesa: d.id }));
+                if (!recorrente && rep && rep.checked) await run(sb.rpc('tornar_despesa_fixa', { p_despesa: d.id }));
+                toast(rep && rep.checked ? 'Agora ela se repete todo mês.' : 'Despesa salva.');
+              }
               fechar();
-              toast(d ? 'Despesa salva.' : 'Despesa lançada.');
               rotear();
             } catch (err) { erro.textContent = msgErro(err); erro.classList.remove('hidden'); }
           });
         });
+        const parar = $('#parar-desp', f);
+        if (parar) parar.addEventListener('click', async () => {
+          if (!(await confirmar('Parar de repetir?', { detalhe: `Este mês continua lançado. A partir do mês que vem, "${esc(d.descricao)}" não aparece mais.`, ok: 'Parar de repetir', perigo: true }))) return;
+          try { await run(sb.rpc('parar_despesa_fixa', { p_despesa: d.id })); fechar(); toast('Não vai mais repetir.'); rotear(); } catch (err) { toast(msgErro(err), 'erro'); }
+        });
         const apagar = $('#apagar-desp', f);
         if (apagar) apagar.addEventListener('click', async () => {
-          if (!(await confirmar('Apagar esta despesa?', { ok: 'Apagar', perigo: true }))) return;
+          if (!(await confirmar(recorrente ? 'Apagar só deste mês?' : 'Apagar esta despesa?', { detalhe: recorrente ? 'Os outros meses continuam. Para parar de vez, use "Parar de repetir".' : '', ok: 'Apagar', perigo: true }))) return;
           try { await run(sb.from('despesas').delete().eq('id', d.id)); fechar(); toast('Despesa apagada.'); rotear(); } catch (err) { toast(msgErro(err), 'erro'); }
         });
       }
@@ -1880,6 +1956,9 @@
               <a class="btn" id="zap-convite" target="_blank" rel="noopener" href="https://wa.me/?text=${encodeURIComponent(`Oi! Vamos usar o Foresee na ${L.nome}. Abra ${url}, crie sua conta e escolha "Entrar com código de convite". O código é: ${L.codigo_convite}`)}">${ic.chat}Enviar</a>
               <button class="btn" type="button" id="novo-codigo">Trocar código</button></div>` : ''}
         </div>
+        ${dono() ? `<div class="card"><h2>${ic.tag.replace('<svg', '<svg style="width:20px;height:20px"')} Vendedores e comissão <button class="link-btn acao" type="button" id="novo-vend">+ Adicionar</button></h2>
+          <p class="small muted" style="margin-bottom:8px">Escolha o vendedor na hora da venda e a comissão é calculada sozinha. Não precisa ter conta no app.</p>
+          <div id="lista-vend">${carregandoHTML()}</div></div>` : ''}
         <div class="card"><h2>${ic.store.replace('<svg', '<svg style="width:20px;height:20px"')} Suas lojas</h2>
           <div class="lista">${S.membros.map((m) => `<div class="item" style="cursor:default"><div class="avatar ${m.loja_id === L.id ? '' : 'cinza'}">${esc(iniciais(m.lojas.nome))}</div>
             <div class="grow"><div class="tit">${esc(m.lojas.nome)}</div><div class="sub">${m.papel === 'dono' ? 'Dono(a)' : 'Equipe'}</div></div>${m.loja_id === L.id ? '<span class="badge ok">Atual</span>' : ''}</div>`).join('')}</div>
@@ -1928,6 +2007,21 @@
       } catch (err) { toast(msgErro(err), 'erro'); }
     });
 
+    if (dono()) {
+      const desenharVend = async (forcar) => {
+        const vs = await carregarVendedores(forcar);
+        const box = $('#lista-vend');
+        if (!box) return;
+        box.innerHTML = vs.length ? `<div class="lista">${vs.map((x) => `<button class="item" type="button" data-ev="${x.id}">
+            <div class="avatar ${x.ativo ? '' : 'cinza'}">${esc(iniciais(x.nome))}</div>
+            <div class="grow"><div class="tit">${esc(x.nome)} ${x.ativo ? '' : '<span class="badge">inativo</span>'}</div><div class="sub">Comissão de ${n1(x.comissao_pct)}% sobre a venda</div></div>
+            ${ic.edit.replace('<svg', '<svg style="width:18px;height:18px;color:var(--ink-3)"')}</button>`).join('')}</div>`
+          : '<p class="small faint">Nenhum vendedor cadastrado.</p>';
+        $$('[data-ev]', box).forEach((b) => b.addEventListener('click', () => formVendedor(vs.find((x) => x.id === b.dataset.ev), () => desenharVend(true))));
+      };
+      $('#novo-vend').addEventListener('click', () => formVendedor(null, () => desenharVend(true)));
+      desenharVend(true).catch((e) => { const b = $('#lista-vend'); if (b) b.innerHTML = `<p class="small muted">${esc(msgErro(e))}</p>`; });
+    }
     const equipe = await run(sb.from('membros').select('user_id, nome, papel, created_at').eq('loja_id', L.id).order('created_at'));
     if (!vivo(token)) return;
     $('#equipe').innerHTML = `<div class="lista">${equipe.map((m) => `<div class="item" style="cursor:default"><div class="avatar ${m.papel === 'dono' ? '' : 'cinza'}">${esc(iniciais(m.nome))}</div>
@@ -1943,6 +2037,41 @@
       } catch (err) { toast(msgErro(err), 'erro'); }
     }));
   };
+
+  function formVendedor(x, aoSalvar) {
+    abrirFolha(`${cabFolha(x ? 'Editar vendedor' : 'Novo vendedor')}
+      <form class="form" id="f-vend" novalidate>
+        <label class="campo"><span>Nome</span><input class="input" name="nome" value="${esc(x ? x.nome : '')}" placeholder="Ex.: Betinho" autofocus></label>
+        <label class="campo"><span>Comissão</span><div class="row"><input class="input" name="pct" inputmode="decimal" value="${x ? String(x.comissao_pct).replace('.', ',') : ''}" placeholder="Ex.: 3" style="max-width:120px"><b>% sobre cada venda</b></div>
+          <span class="ajuda">Calculada sobre o valor final da venda (depois do desconto).</span></label>
+        ${x ? `<label class="check-row"><input type="checkbox" id="vend-ativo" ${x.ativo ? 'checked' : ''}><span><b>Ativo</b><small>Desmarque se a pessoa saiu. As vendas antigas continuam no nome dela.</small></span></label>` : ''}
+        <p class="erro-msg hidden" id="vend-erro"></p>
+        <button class="btn prim bloco grande" type="submit">${x ? 'Salvar' : 'Adicionar vendedor'}</button>
+      </form>`, {
+      aoAbrir: (f, fechar) => {
+        const form = $('#f-vend', f);
+        form.addEventListener('submit', async (e) => {
+          e.preventDefault();
+          const erro = $('#vend-erro', f);
+          const nome = form.nome.value.trim();
+          const pctV = parseMoney(form.pct.value);
+          if (!nome) { erro.textContent = 'Digite o nome.'; erro.classList.remove('hidden'); return; }
+          if (pctV < 0 || pctV > 100) { erro.textContent = 'A comissão vai de 0 a 100%.'; erro.classList.remove('hidden'); return; }
+          const dados = { nome, comissao_pct: pctV };
+          if (x) dados.ativo = $('#vend-ativo', f).checked;
+          await ocupado(form.querySelector('button[type=submit]'), async () => {
+            try {
+              if (x) await run(sb.from('vendedores').update(dados).eq('id', x.id));
+              else await run(sb.from('vendedores').insert(Object.assign({ loja_id: S.loja.id }, dados)));
+              fechar();
+              toast(x ? 'Vendedor salvo.' : 'Vendedor adicionado.');
+              if (aoSalvar) aoSalvar();
+            } catch (err) { erro.textContent = msgErro(err); erro.classList.remove('hidden'); }
+          });
+        });
+      }
+    });
+  }
 
   // MAIS (menu do celular)
   TELAS.mais = function (v) {

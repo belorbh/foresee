@@ -461,3 +461,9 @@ textarea.input { min-height: 80px; resize: vertical; }
 .check-lista .n { width: 28px; height: 28px; border-radius: 9px; background: var(--accent); color: var(--accent-ink); display: grid; place-items: center; font-weight: 800; font-size: 14px; flex: none; }
 .check-lista .feito .n { background: var(--accent-soft); color: var(--accent-2); }
 .check-lista .feito .t { text-decoration: line-through; color: var(--ink-3); }
+
+/* Caixa de marcar */
+.check-row { display: flex; gap: 12px; align-items: flex-start; padding: 12px; border-radius: 12px; background: var(--surface-2); cursor: pointer; }
+.check-row input { width: 22px; height: 22px; margin: 1px 0 0; accent-color: var(--accent); flex: none; }
+.check-row b { display: block; font-size: 14.5px; }
+.check-row small { display: block; color: var(--ink-2); font-size: 12.5px; margin-top: 2px; }
