@@ -142,6 +142,52 @@ create table if not exists public.despesas (
   created_at  timestamptz not null default now()
 );
 
+-- v1.2: vendedores com comissão
+create table if not exists public.vendedores (
+  id            uuid primary key default gen_random_uuid(),
+  loja_id       uuid not null references public.lojas(id) on delete cascade,
+  nome          text not null check (char_length(trim(nome)) >= 1),
+  comissao_pct  numeric(5,2) not null default 0 check (comissao_pct >= 0 and comissao_pct <= 100),
+  ativo         boolean not null default true,
+  created_at    timestamptz not null default now(),
+  unique (id, loja_id)
+);
+alter table public.vendas add column if not exists vendedor_cad_id uuid;
+alter table public.vendas add column if not exists comissao numeric(12,2) not null default 0;
+do $$ begin
+  if not exists (select 1 from pg_constraint where conname = 'vendas_vendedor_cad_fk') then
+    alter table public.vendas add constraint vendas_vendedor_cad_fk
+      foreign key (vendedor_cad_id, loja_id) references public.vendedores(id, loja_id) on delete set null (vendedor_cad_id);
+  end if;
+end $$;
+
+-- v1.2: despesas fixas que se repetem todo mês
+create table if not exists public.despesas_fixas (
+  id          uuid primary key default gen_random_uuid(),
+  loja_id     uuid not null references public.lojas(id) on delete cascade,
+  descricao   text not null,
+  categoria   text not null default 'Outros',
+  valor       numeric(12,2) not null check (valor > 0),
+  dia         integer not null default 1 check (dia between 1 and 31),
+  inicio      date not null,
+  fim         date,
+  created_at  timestamptz not null default now(),
+  unique (id, loja_id)
+);
+create table if not exists public.despesas_fixas_geradas (
+  modelo_id    uuid not null references public.despesas_fixas(id) on delete cascade,
+  competencia  date not null,
+  primary key (modelo_id, competencia)
+);
+alter table public.despesas add column if not exists modelo_id uuid;
+alter table public.despesas add column if not exists competencia date;
+do $$ begin
+  if not exists (select 1 from pg_constraint where conname = 'despesas_modelo_fk') then
+    alter table public.despesas add constraint despesas_modelo_fk
+      foreign key (modelo_id, loja_id) references public.despesas_fixas(id, loja_id) on delete set null (modelo_id);
+  end if;
+end $$;
+
 -- v1.1: canal da venda (loja física, Instagram, WhatsApp)
 alter table public.vendas add column if not exists canal text not null default 'Loja física';
 
@@ -214,6 +260,20 @@ create policy clientes_tudo on public.clientes for all to authenticated
 
 -- Despesas: só o dono
 drop policy if exists despesas_dono on public.despesas;
+alter table public.vendedores             enable row level security;
+alter table public.despesas_fixas         enable row level security;
+alter table public.despesas_fixas_geradas enable row level security;
+
+drop policy if exists vendedores_ver   on public.vendedores;
+drop policy if exists vendedores_dono  on public.vendedores;
+create policy vendedores_ver  on public.vendedores for select to authenticated using (public.eh_membro(loja_id));
+create policy vendedores_dono on public.vendedores for all to authenticated
+  using (public.eh_dono(loja_id)) with check (public.eh_dono(loja_id));
+
+drop policy if exists despesas_fixas_dono on public.despesas_fixas;
+create policy despesas_fixas_dono on public.despesas_fixas for all to authenticated
+  using (public.eh_dono(loja_id)) with check (public.eh_dono(loja_id));
+
 create policy despesas_dono on public.despesas for all to authenticated
   using (public.eh_dono(loja_id)) with check (public.eh_dono(loja_id));
 
@@ -374,6 +434,7 @@ end $$;
 
 -- versão antiga (sem data e canal)
 drop function if exists public.registrar_venda(uuid, jsonb, text, numeric, integer, uuid, text);
+drop function if exists public.registrar_venda(uuid, jsonb, text, numeric, integer, uuid, text, timestamptz, text);
 
 create or replace function public.registrar_venda(
   p_loja      uuid,
@@ -384,7 +445,8 @@ create or replace function public.registrar_venda(
   p_cliente   uuid default null,
   p_obs       text default null,
   p_data      timestamptz default null,
-  p_canal     text default null
+  p_canal     text default null,
+  p_vendedor  uuid default null
 ) returns jsonb language plpgsql security definer set search_path = public as $$
 declare
   v_uid       uuid := auth.uid();
@@ -402,12 +464,17 @@ declare
   v_saldo     integer;
   v_data      timestamptz := coalesce(p_data, now());
   v_canal     text := coalesce(nullif(trim(p_canal), ''), 'Loja física');
+  v_pct       numeric := 0;
 begin
   if v_uid is null then raise exception 'Faça login novamente.'; end if;
   if v_data > now() + interval '10 minutes' then raise exception 'A data da venda não pode ser no futuro.'; end if;
   if v_data < now() - interval '1 year' then raise exception 'A data da venda é muito antiga.'; end if;
   select nome into v_nome from membros where loja_id = p_loja and user_id = v_uid;
   if not found then raise exception 'Sem acesso a esta loja.'; end if;
+  if p_vendedor is not null then
+    select nome, comissao_pct into v_nome, v_pct from vendedores where id = p_vendedor and loja_id = p_loja;
+    if not found then raise exception 'Vendedor não encontrado.'; end if;
+  end if;
   if p_itens is null or jsonb_typeof(p_itens) <> 'array' or jsonb_array_length(p_itens) = 0 then
     raise exception 'A venda precisa de pelo menos 1 peça.';
   end if;
@@ -419,8 +486,8 @@ begin
   perform 1 from lojas where id = p_loja for update;   -- numeração sem repetir
   select coalesce(max(numero), 0) + 1 into v_numero from vendas where loja_id = p_loja;
 
-  insert into vendas (loja_id, numero, data, canal, cliente_id, vendedor_id, vendedor_nome, forma_pagamento, parcelas, observacao)
-    values (p_loja, v_numero, v_data, v_canal, p_cliente, v_uid, v_nome, trim(p_forma),
+  insert into vendas (loja_id, numero, data, canal, vendedor_cad_id, cliente_id, vendedor_id, vendedor_nome, forma_pagamento, parcelas, observacao)
+    values (p_loja, v_numero, v_data, v_canal, p_vendedor, p_cliente, v_uid, v_nome, trim(p_forma),
             greatest(coalesce(p_parcelas, 1), 1), nullif(trim(p_obs), ''))
     returning id into v_venda;
 
@@ -455,7 +522,8 @@ begin
   if v_desc < 0 or v_desc > v_subtotal then raise exception 'Desconto inválido.'; end if;
 
   update vendas set subtotal = v_subtotal, desconto = v_desc, total = v_subtotal - v_desc,
-                    custo_total = v_custo, pecas = v_pecas
+                    custo_total = v_custo, pecas = v_pecas,
+                    comissao = round((v_subtotal - v_desc) * coalesce(v_pct, 0) / 100, 2)
     where id = v_venda;
 
   return jsonb_build_object('id', v_venda, 'numero', v_numero, 'total', v_subtotal - v_desc);
@@ -517,6 +585,7 @@ begin
            'faturamento', coalesce(sum(total), 0), 'vendas', count(*), 'pecas', coalesce(sum(pecas), 0),
            'desconto', coalesce(sum(desconto), 0), 'subtotal', coalesce(sum(subtotal), 0),
            'custo', case when v_dono then coalesce(sum(custo_total), 0) end,
+           'comissao', case when v_dono then coalesce(sum(comissao), 0) end,
            'com_cliente', count(cliente_id))
     into v_mes
     from vendas where loja_id = p_loja and status = 'concluida' and data >= p_inicio and data < p_fim;
@@ -550,9 +619,9 @@ begin
             from vendas where loja_id = p_loja and status = 'concluida' and data >= p_inicio and data < p_fim
            group by 1) c;
 
-  select coalesce(jsonb_agg(jsonb_build_object('nome', nome, 'total', total, 'vendas', n) order by total desc), '[]'::jsonb)
+  select coalesce(jsonb_agg(jsonb_build_object('nome', nome, 'total', total, 'vendas', n, 'comissao', case when v_dono then com end) order by total desc), '[]'::jsonb)
     into v_vend
-    from (select coalesce(vendedor_nome, '—') as nome, sum(total) as total, count(*) as n
+    from (select coalesce(vendedor_nome, '—') as nome, sum(total) as total, count(*) as n, sum(comissao) as com
             from vendas where loja_id = p_loja and status = 'concluida' and data >= p_inicio and data < p_fim
            group by 1) x;
 
@@ -628,6 +697,110 @@ language sql stable security definer set search_path = public as $$
      and public.eh_membro(p_loja)
    group by v.cliente_id;
 $$;
+
+-- ---------- Vendedor da venda (dono corrige depois) -----------------
+
+create or replace function public.definir_vendedor_venda(p_venda uuid, p_vendedor uuid)
+returns void language plpgsql security definer set search_path = public as $$
+declare v record; vd record;
+begin
+  select * into v from vendas where id = p_venda;
+  if not found or not eh_dono(v.loja_id) then raise exception 'Só o dono pode trocar o vendedor.'; end if;
+  if p_vendedor is null then
+    update vendas set vendedor_cad_id = null, comissao = 0,
+           vendedor_nome = coalesce((select nome from membros where loja_id = v.loja_id and user_id = v.vendedor_id), vendedor_nome)
+     where id = p_venda;
+  else
+    select * into vd from vendedores where id = p_vendedor and loja_id = v.loja_id;
+    if not found then raise exception 'Vendedor não encontrado.'; end if;
+    update vendas set vendedor_cad_id = vd.id, vendedor_nome = vd.nome,
+           comissao = round(total * vd.comissao_pct / 100, 2)
+     where id = p_venda;
+  end if;
+end $$;
+
+-- ---------- Despesas fixas (repetem todo mês) ----------------------
+
+create or replace function public.gerar_despesas_fixas(p_loja uuid, p_mes date)
+returns integer language plpgsql security definer set search_path = public as $$
+declare
+  m   date := date_trunc('month', p_mes)::date;
+  f   record;
+  n   integer := 0;
+  ult integer := extract(day from (date_trunc('month', p_mes) + interval '1 month - 1 day'))::int;
+begin
+  if not eh_dono(p_loja) then return 0; end if;
+  if m > (date_trunc('month', now()) + interval '24 months')::date then return 0; end if;
+  for f in select * from despesas_fixas
+            where loja_id = p_loja and inicio <= m and (fim is null or fim >= m) loop
+    insert into despesas_fixas_geradas (modelo_id, competencia) values (f.id, m) on conflict do nothing;
+    if found then
+      insert into despesas (loja_id, data, descricao, categoria, valor, tipo, modelo_id, competencia)
+        values (p_loja, m + (least(f.dia, ult) - 1), f.descricao, f.categoria, f.valor, 'fixa', f.id, m);
+      n := n + 1;
+    end if;
+  end loop;
+  return n;
+end $$;
+
+create or replace function public.criar_despesa_fixa(p_loja uuid, p_descricao text, p_categoria text, p_valor numeric, p_data date)
+returns uuid language plpgsql security definer set search_path = public as $$
+declare v_id uuid; m date := date_trunc('month', p_data)::date;
+begin
+  if not eh_dono(p_loja) then raise exception 'Só o dono lança despesas.'; end if;
+  if coalesce(p_valor, 0) <= 0 then raise exception 'Digite o valor.'; end if;
+  insert into despesas_fixas (loja_id, descricao, categoria, valor, dia, inicio)
+    values (p_loja, coalesce(nullif(trim(p_descricao), ''), p_categoria), coalesce(nullif(trim(p_categoria), ''), 'Outros'),
+            round(p_valor, 2), extract(day from p_data)::int, m)
+    returning id into v_id;
+  while m <= greatest(date_trunc('month', p_data)::date, date_trunc('month', now())::date) loop
+    perform gerar_despesas_fixas(p_loja, m);
+    m := (m + interval '1 month')::date;
+  end loop;
+  return v_id;
+end $$;
+
+create or replace function public.tornar_despesa_fixa(p_despesa uuid)
+returns uuid language plpgsql security definer set search_path = public as $$
+declare d record; v_id uuid; m date;
+begin
+  select * into d from despesas where id = p_despesa;
+  if not found or not eh_dono(d.loja_id) then raise exception 'Despesa não encontrada.'; end if;
+  if d.modelo_id is not null then return d.modelo_id; end if;
+  m := date_trunc('month', d.data)::date;
+  insert into despesas_fixas (loja_id, descricao, categoria, valor, dia, inicio)
+    values (d.loja_id, d.descricao, d.categoria, d.valor, extract(day from d.data)::int, m)
+    returning id into v_id;
+  insert into despesas_fixas_geradas (modelo_id, competencia) values (v_id, m);
+  update despesas set modelo_id = v_id, competencia = m, tipo = 'fixa' where id = p_despesa;
+  m := (m + interval '1 month')::date;
+  while m <= date_trunc('month', now())::date loop
+    perform gerar_despesas_fixas(d.loja_id, m);
+    m := (m + interval '1 month')::date;
+  end loop;
+  return v_id;
+end $$;
+
+create or replace function public.atualizar_despesa_fixa(p_despesa uuid)
+returns void language plpgsql security definer set search_path = public as $$
+declare d record;
+begin
+  select * into d from despesas where id = p_despesa;
+  if not found or not eh_dono(d.loja_id) or d.modelo_id is null then raise exception 'Despesa fixa não encontrada.'; end if;
+  update despesas_fixas set descricao = d.descricao, categoria = d.categoria, valor = d.valor where id = d.modelo_id;
+  update despesas set descricao = d.descricao, categoria = d.categoria, valor = d.valor
+   where modelo_id = d.modelo_id and competencia > d.competencia;
+end $$;
+
+create or replace function public.parar_despesa_fixa(p_despesa uuid)
+returns void language plpgsql security definer set search_path = public as $$
+declare d record;
+begin
+  select * into d from despesas where id = p_despesa;
+  if not found or not eh_dono(d.loja_id) or d.modelo_id is null then raise exception 'Despesa fixa não encontrada.'; end if;
+  update despesas_fixas set fim = d.competencia where id = d.modelo_id;
+  delete from despesas where modelo_id = d.modelo_id and competencia > d.competencia;
+end $$;
 
 -- ---------- Permissões -----------------------------------------------
 
