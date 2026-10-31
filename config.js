@@ -3,5 +3,5 @@
 window.FORESEE_CONFIG = {
   url: 'https://wamgjhvviiuycirfkfvm.supabase.co',
   key: 'sb_publishable_Jiz-09YzPOF41kem8txmzQ_zzB9NQOA',
-  versao: '1.2.1'
+  versao: '1.3.0'
 };

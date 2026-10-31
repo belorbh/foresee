@@ -249,6 +249,11 @@
     carrinho: [], ocultar: false
   };
   const dono = () => S.papel === 'dono';
+  const gerente = () => S.papel === 'dono' || S.papel === 'gerente';
+  const soVendedor = () => !gerente();
+  const NOME_PAPEL = { dono: 'Dono(a)', gerente: 'Gerente', vendedor: 'Vendedor(a)' };
+  const ROTAS_VENDEDOR = ['vender', 'vendas', 'ajustes'];
+  const rotaInicial = () => (soVendedor() ? '#/vender' : '#/inicio');
   let rotaToken = 0;
   let recuperando = false;
   let promptInstalar = null;
@@ -381,7 +386,7 @@
       const alvo = lojaPreferida || LS.get('loja', null);
       usarLoja(S.membros.find((x) => x.loja_id === alvo) || S.membros[0]);
       montarShell();
-      if (!/^#\/[a-z]/.test(location.hash)) history.replaceState(null, '', location.pathname + '#/inicio');
+      if (!/^#\/[a-z]/.test(location.hash)) history.replaceState(null, '', location.pathname + rotaInicial());
       rotear();
     } catch (e) {
       app.innerHTML = `<div class="entrada"><div class="entrada-box">${erroHTML(e)}<button class="btn bloco" style="margin-top:12px" id="sair-erro">Sair</button></div></div>`;
@@ -479,7 +484,7 @@
   // Estrutura do app e rotas
   // ------------------------------------------------------------------
   function montarShell() {
-    const itens = [
+    const itens = soVendedor() ? [['vendas', 'Minhas vendas', ic.receipt], ['ajustes', 'Minha conta', ic.sliders]] : [
       ['inicio', 'Início', ic.home], ['vendas', 'Vendas', ic.receipt], ['produtos', 'Produtos e estoque', ic.shirt],
       ['clientes', 'Clientes', ic.users], ...(dono() ? [['despesas', 'Despesas e lucro', ic.wallet]] : []),
       ['ajustes', 'Loja e equipe', ic.sliders]
@@ -499,13 +504,17 @@
         </header>
         <main class="view" id="view"></main>
       </div>
-      <nav class="bottomnav" aria-label="Menu">
+      ${soVendedor() ? `<nav class="bottomnav" aria-label="Menu" style="grid-template-columns:repeat(3,1fr)">
+        <a class="navbtn" data-rota="vendas" href="#/vendas">${ic.receipt}<span>Minhas vendas</span></a>
+        <a class="navbtn vender" data-rota="vender" href="#/vender"><span class="bolha">${ic.plus}</span><span>Vender</span></a>
+        <a class="navbtn" data-rota="ajustes" href="#/ajustes">${ic.sliders}<span>Conta</span></a>
+      </nav>` : `<nav class="bottomnav" aria-label="Menu">
         <a class="navbtn" data-rota="inicio" href="#/inicio">${ic.home}<span>Início</span></a>
         <a class="navbtn" data-rota="produtos" href="#/produtos">${ic.shirt}<span>Produtos</span></a>
         <a class="navbtn vender" data-rota="vender" href="#/vender"><span class="bolha">${ic.plus}</span><span>Vender</span></a>
         <a class="navbtn" data-rota="clientes" href="#/clientes">${ic.users}<span>Clientes</span></a>
         <a class="navbtn" data-rota="mais" href="#/mais">${ic.dots}<span>Mais</span></a>
-      </nav></div>`;
+      </nav>`}</div>`;
     $('#btn-olho').addEventListener('click', () => {
       S.ocultar = !S.ocultar;
       LS.set('ocultar', S.ocultar);
@@ -520,7 +529,7 @@
     abrirFolha(`${cabFolha('Suas lojas')}
       <div class="lista">${S.membros.map((m) => `<button class="item" type="button" data-loja="${m.loja_id}">
         <div class="avatar">${esc(iniciais(m.lojas.nome))}</div>
-        <div class="grow"><div class="tit">${esc(m.lojas.nome)}</div><div class="sub">${esc(m.lojas.cidade || '')}${m.lojas.cidade ? ' · ' : ''}${m.papel === 'dono' ? 'Dono(a)' : 'Equipe'}</div></div>
+        <div class="grow"><div class="tit">${esc(m.lojas.nome)}</div><div class="sub">${esc(m.lojas.cidade || '')}${m.lojas.cidade ? ' · ' : ''}${NOME_PAPEL[m.papel] || 'Equipe'}</div></div>
         ${m.loja_id === S.loja.id ? `<span class="badge ok">${ic.check.replace('<svg', '<svg style="width:14px;height:14px"')} Atual</span>` : ''}</button>`).join('')}</div>
       <div class="grid c2" style="margin-top:14px;grid-template-columns:1fr 1fr">
         <button class="btn" type="button" id="nova-loja">${ic.store}Cadastrar loja</button>
@@ -532,7 +541,7 @@
           if (!m || m.loja_id === S.loja.id) return;
           usarLoja(m);
           montarShell();
-          if (location.hash === '#/inicio') rotear(); else location.hash = '#/inicio';
+          if (location.hash === rotaInicial()) rotear(); else location.hash = rotaInicial();
           toast(`Agora em: ${m.lojas.nome}`);
         }));
         $('#nova-loja', f).addEventListener('click', () => { fechar(); formCriarLoja(); });
@@ -551,6 +560,7 @@
     const arg = partes[1] ? decodeURIComponent(partes[1]) : '';
     if (!TELAS[rota]) rota = 'inicio';
     if (rota === 'despesas' && !dono()) rota = 'inicio';
+    if (soVendedor() && !ROTAS_VENDEDOR.includes(rota)) rota = 'vender';
     const grupoMais = ['vendas', 'despesas', 'ajustes', 'mais'];
     $$('[data-rota]').forEach((a) => {
       const r = a.dataset.rota;
@@ -866,7 +876,7 @@
     const lista = $('#lista-venda');
     if (!produtos.length) {
       lista.style.display = 'block';
-      lista.innerHTML = vazioHTML(ic.shirt, 'Nenhum produto cadastrado', 'Cadastre os produtos para vender pelo Foresee.', '#/produto/novo', 'Cadastrar produto');
+      lista.innerHTML = soVendedor() ? vazioHTML(ic.shirt, 'Nenhum produto cadastrado', 'Peça para o dono ou gerente cadastrar os produtos.', null, '') : vazioHTML(ic.shirt, 'Nenhum produto cadastrado', 'Cadastre os produtos para vender pelo Foresee.', '#/produto/novo', 'Cadastrar produto');
       return;
     }
     const cats = [...new Set(produtos.map((p) => p.categoria).filter(Boolean))].sort();
@@ -1173,7 +1183,7 @@
       <div class="stack" style="margin-top:18px">
         ${link ? `<a class="btn bloco" href="${link}" target="_blank" rel="noopener">${ic.chat}Mandar comprovante no WhatsApp</a>` : ''}
         <button class="btn prim bloco grande" type="button" data-fechar>Nova venda</button>
-        <a class="btn bloco" href="#/vendas" id="ver-vendas">Ver vendas de hoje</a></div>`, {
+        <a class="btn bloco" href="#/vendas" id="ver-vendas">${soVendedor() ? 'Ver minhas vendas' : 'Ver vendas de hoje'}</a></div>`, {
       aoAbrir: (f, fechar) => { $('#ver-vendas', f).addEventListener('click', fechar); }
     });
   }
@@ -1220,7 +1230,7 @@
       passado: [inicioMes(agora, -1), inicioMes(agora), 'Mês passado']
     };
     const [de, ate] = faixas[periodo];
-    v.innerHTML = `<div class="page-head"><div><h1>Vendas</h1><p class="sub">Toque numa venda para ver os detalhes</p></div><a class="btn prim" href="#/vender">${ic.plus}Vender</a></div>
+    v.innerHTML = `<div class="page-head"><div><h1>${soVendedor() ? 'Minhas vendas' : 'Vendas'}</h1><p class="sub">Toque numa venda para ver os detalhes</p></div><a class="btn prim" href="#/vender">${ic.plus}Vender</a></div>
       <div class="seg" style="margin-bottom:14px">${Object.entries(faixas).map(([k, f]) => `<button type="button" data-per="${k}" class="${k === periodo ? 'ativo' : ''}">${f[2]}</button>`).join('')}</div>
       <div id="vendas-conteudo">${carregandoHTML()}</div>`;
     $$('[data-per]', v).forEach((b) => b.addEventListener('click', () => { location.hash = '#/vendas/' + b.dataset.per; }));
@@ -1287,7 +1297,7 @@
       </div>
       <div class="stack" style="margin-top:14px">
         ${link ? `<a class="btn bloco" href="${link}" target="_blank" rel="noopener">${ic.chat}Mandar comprovante no WhatsApp</a>` : ''}
-        ${venda.cliente_id ? `<a class="btn bloco" href="#/cliente/${venda.cliente_id}" id="ver-cli">${ic.users}Ver cliente</a>` : ''}
+        ${venda.cliente_id && gerente() ? `<a class="btn bloco" href="#/cliente/${venda.cliente_id}" id="ver-cli">${ic.users}Ver cliente</a>` : ''}
         ${dono() && venda.status === 'concluida' ? `<button class="btn bloco" type="button" id="trocar-vend">${ic.users}${venda.vendedor_cad_id ? `Vendedor: ${esc(venda.vendedor_nome)} · comissão ${brl(venda.comissao)} (trocar)` : 'Definir vendedor (comissão)'}</button>` : ''}
         ${dono() && venda.status === 'concluida' ? `<button class="btn perigo bloco" type="button" id="cancelar-venda">${ic.x}Cancelar venda</button>` : ''}
       </div>`;
@@ -1934,6 +1944,21 @@
   // ------------------------------------------------------------------
   TELAS.ajustes = async function (v, _, token) {
     const L = S.loja;
+    if (soVendedor()) {
+      v.innerHTML = `<div class="page-head"><div><h1>Minha conta</h1><p class="sub">${esc(L.nome)} · ${NOME_PAPEL[S.papel]}</p></div></div>
+        <div class="grid c2">
+          <div class="card"><h2>${ic.key.replace('<svg', '<svg style="width:20px;height:20px"')} Sua conta</h2>
+            <p class="small muted">${esc(S.m.nome)} · <b style="color:var(--ink)">${esc(S.user.email)}</b></p>
+            <p class="small muted" style="margin-top:8px">Seu acesso é de vendas: registrar vendas e ver as suas vendas. Para mais acesso, fale com o dono da loja.</p>
+            <div class="grid" style="grid-template-columns:1fr 1fr;margin-top:12px"><button class="btn" type="button" id="aj-trocar">Trocar de loja</button><button class="btn perigo" type="button" id="aj-sair">${ic.logout}Sair</button></div></div>
+          <div class="card"><h2>${ic.phone.replace('<svg', '<svg style="width:20px;height:20px"')} Instalar no celular</h2>
+            <p class="small muted"><b style="color:var(--ink)">iPhone:</b> abra no Safari, toque em Compartilhar e depois em "Adicionar à Tela de Início".</p>
+            <p class="small muted" style="margin-top:8px"><b style="color:var(--ink)">Android:</b> no Chrome, toque nos 3 pontinhos e em "Instalar app".</p></div>
+        </div><p class="tiny faint" style="text-align:center;margin-top:18px">Foresee ${esc(CFG.versao || '')}</p>`;
+      $('#aj-trocar').addEventListener('click', trocarLoja);
+      $('#aj-sair').addEventListener('click', sair);
+      return;
+    }
     const url = location.origin + location.pathname;
     v.innerHTML = `<div class="page-head"><div><h1>Loja e equipe</h1><p class="sub">${esc(L.nome)}${L.cidade ? ' · ' + esc(L.cidade) : ''}</p></div></div>
       <div class="grid c2">
@@ -1950,7 +1975,7 @@
         </form>
         <div class="card"><h2>${ic.users.replace('<svg', '<svg style="width:20px;height:20px"')} Equipe</h2><div id="equipe">${carregandoHTML()}</div>
           ${dono() ? `<div class="section-title" style="margin-top:16px">Código de convite</div>
-            <p class="small muted" style="margin-bottom:10px">Quem trabalha na loja cria a conta no Foresee e digita este código. A equipe vende e cadastra, mas não vê custo, lucro nem despesas.</p>
+            <p class="small muted" style="margin-bottom:10px">Quem trabalha na loja cria a conta no Foresee e digita este código. Entra como <b>vendedor</b> (só vendas). Você pode mudar para gerente na lista acima.</p>
             <div class="codigo-convite" id="codigo">${esc(L.codigo_convite)}</div>
             <div class="grid" style="grid-template-columns:1fr 1fr;margin-top:10px">
               <a class="btn" id="zap-convite" target="_blank" rel="noopener" href="https://wa.me/?text=${encodeURIComponent(`Oi! Vamos usar o Foresee na ${L.nome}. Abra ${url}, crie sua conta e escolha "Entrar com código de convite". O código é: ${L.codigo_convite}`)}">${ic.chat}Enviar</a>
@@ -1961,7 +1986,7 @@
           <div id="lista-vend">${carregandoHTML()}</div></div>` : ''}
         <div class="card"><h2>${ic.store.replace('<svg', '<svg style="width:20px;height:20px"')} Suas lojas</h2>
           <div class="lista">${S.membros.map((m) => `<div class="item" style="cursor:default"><div class="avatar ${m.loja_id === L.id ? '' : 'cinza'}">${esc(iniciais(m.lojas.nome))}</div>
-            <div class="grow"><div class="tit">${esc(m.lojas.nome)}</div><div class="sub">${m.papel === 'dono' ? 'Dono(a)' : 'Equipe'}</div></div>${m.loja_id === L.id ? '<span class="badge ok">Atual</span>' : ''}</div>`).join('')}</div>
+            <div class="grow"><div class="tit">${esc(m.lojas.nome)}</div><div class="sub">${NOME_PAPEL[m.papel] || 'Equipe'}</div></div>${m.loja_id === L.id ? '<span class="badge ok">Atual</span>' : ''}</div>`).join('')}</div>
           <div class="grid" style="grid-template-columns:1fr 1fr;margin-top:10px"><button class="btn" type="button" id="aj-trocar">Trocar de loja</button><button class="btn" type="button" id="aj-nova">${ic.plus}Nova loja</button></div></div>
         <div class="card"><h2>${ic.phone.replace('<svg', '<svg style="width:20px;height:20px"')} Instalar no celular</h2>
           <p class="small muted"><b style="color:var(--ink)">iPhone:</b> abra no Safari, toque em Compartilhar e depois em "Adicionar à Tela de Início".</p>
@@ -2025,8 +2050,18 @@
     const equipe = await run(sb.from('membros').select('user_id, nome, papel, created_at').eq('loja_id', L.id).order('created_at'));
     if (!vivo(token)) return;
     $('#equipe').innerHTML = `<div class="lista">${equipe.map((m) => `<div class="item" style="cursor:default"><div class="avatar ${m.papel === 'dono' ? '' : 'cinza'}">${esc(iniciais(m.nome))}</div>
-        <div class="grow"><div class="tit">${esc(m.nome)}${m.user_id === S.user.id ? ' <span class="faint small">(você)</span>' : ''}</div><div class="sub">${m.papel === 'dono' ? 'Dono(a)' : 'Equipe de vendas'} · desde ${fmtData(m.created_at)}</div></div>
-        ${dono() && m.user_id !== S.user.id ? `<button class="btn peq perigo" type="button" data-remover="${m.user_id}" data-nome="${esc(m.nome)}">Remover</button>` : ''}</div>`).join('')}</div>`;
+        <div class="grow"><div class="tit">${esc(m.nome)}${m.user_id === S.user.id ? ' <span class="faint small">(você)</span>' : ''}</div><div class="sub">${dono() && m.papel !== 'dono' ? '' : `${NOME_PAPEL[m.papel] || 'Equipe'} · `}desde ${fmtData(m.created_at)}</div>
+          ${dono() && m.papel !== 'dono' ? `<select class="input" data-papel="${m.user_id}" style="min-height:36px;padding:6px 10px;font-size:14px;margin-top:6px;max-width:220px">
+            <option value="vendedor" ${m.papel === 'vendedor' ? 'selected' : ''}>Vendedor: só vendas</option>
+            <option value="gerente" ${m.papel === 'gerente' ? 'selected' : ''}>Gerente: mais acesso</option></select>` : ''}</div>
+        ${dono() && m.user_id !== S.user.id ? `<button class="btn peq perigo" type="button" data-remover="${m.user_id}" data-nome="${esc(m.nome)}">Remover</button>` : ''}</div>`).join('')}</div>
+      ${dono() ? `<p class="tiny faint" style="margin-top:8px"><b>Vendedor:</b> só registra vendas e vê as próprias vendas. <b>Gerente:</b> vê o Início, vendas, produtos, estoque e clientes, mas não vê custo, lucro, despesas nem comissões.</p>` : ''}`;
+    $$('[data-papel]').forEach((sel) => sel.addEventListener('change', async () => {
+      try {
+        await run(sb.rpc('definir_papel', { p_loja: L.id, p_user: sel.dataset.papel, p_papel: sel.value }));
+        toast(sel.value === 'gerente' ? 'Agora é gerente.' : 'Agora é vendedor (só vendas).');
+      } catch (err) { toast(msgErro(err), 'erro'); rotear(); }
+    }));
     $$('[data-remover]').forEach((b) => b.addEventListener('click', async () => {
       const ok = await confirmar(`Remover ${b.dataset.nome} da equipe?`, { detalhe: 'A pessoa perde o acesso à loja na hora. As vendas que ela fez continuam registradas.', ok: 'Remover', perigo: true });
       if (!ok) return;
