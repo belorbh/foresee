@@ -29,7 +29,7 @@ create table if not exists public.membros (
   loja_id     uuid not null references public.lojas(id) on delete cascade,
   user_id     uuid not null references auth.users(id) on delete cascade,
   nome        text not null,
-  papel       text not null default 'vendedor' check (papel in ('dono', 'vendedor')),
+  papel       text not null default 'vendedor' check (papel in ('dono', 'gerente', 'vendedor')),
   created_at  timestamptz not null default now(),
   primary key (loja_id, user_id)
 );
@@ -142,6 +142,10 @@ create table if not exists public.despesas (
   created_at  timestamptz not null default now()
 );
 
+-- v1.3: papel gerente
+alter table public.membros drop constraint if exists membros_papel_check;
+alter table public.membros add constraint membros_papel_check check (papel in ('dono', 'gerente', 'vendedor'));
+
 -- v1.2: vendedores com comissão
 create table if not exists public.vendedores (
   id            uuid primary key default gen_random_uuid(),
@@ -210,6 +214,12 @@ returns boolean language sql stable security definer set search_path = public as
   select exists (select 1 from public.membros where loja_id = p_loja and user_id = auth.uid());
 $$;
 
+create or replace function public.eh_gerente(p_loja uuid)
+returns boolean language sql stable security definer set search_path = public as $$
+  select exists (select 1 from public.membros
+                 where loja_id = p_loja and user_id = auth.uid() and papel in ('dono', 'gerente'));
+$$;
+
 create or replace function public.eh_dono(p_loja uuid)
 returns boolean language sql stable security definer set search_path = public as $$
   select exists (select 1 from public.membros
@@ -250,8 +260,12 @@ create policy movimentos_ver on public.movimentos_estoque for select to authenti
 -- Vendas: leitura direta; registrar/cancelar só pelas funções
 drop policy if exists vendas_ver      on public.vendas;
 drop policy if exists venda_itens_ver on public.venda_itens;
-create policy vendas_ver      on public.vendas      for select to authenticated using (public.eh_membro(loja_id));
-create policy venda_itens_ver on public.venda_itens for select to authenticated using (public.eh_membro(loja_id));
+-- vendedor só vê as próprias vendas; dono e gerente veem todas
+create policy vendas_ver      on public.vendas      for select to authenticated
+  using (public.eh_gerente(loja_id) or (vendedor_id = auth.uid() and public.eh_membro(loja_id)));
+create policy venda_itens_ver on public.venda_itens for select to authenticated
+  using (public.eh_gerente(loja_id) or exists (select 1 from public.vendas v
+          where v.id = venda_id and v.vendedor_id = auth.uid() and public.eh_membro(v.loja_id)));
 
 -- Clientes: toda a equipe cadastra e edita
 drop policy if exists clientes_tudo on public.clientes;
@@ -335,7 +349,7 @@ declare
   v_ini     integer;
   v_saldo   integer;
 begin
-  if not eh_membro(p_loja) then raise exception 'Sem acesso a esta loja.'; end if;
+  if not eh_gerente(p_loja) then raise exception 'Só dono ou gerente cadastram produtos.'; end if;
   if coalesce(trim(p_produto->>'nome'), '') = '' then raise exception 'Dê um nome ao produto.'; end if;
 
   if v_id is null then
@@ -401,7 +415,7 @@ returns void language plpgsql security definer set search_path = public as $$
 declare v_loja uuid;
 begin
   select loja_id into v_loja from produtos where id = p_produto;
-  if v_loja is null or not eh_membro(v_loja) then raise exception 'Produto não encontrado.'; end if;
+  if v_loja is null or not eh_gerente(v_loja) then raise exception 'Só dono ou gerente alteram produtos.'; end if;
   update produtos set ativo = p_ativo, updated_at = now() where id = p_produto;
 end $$;
 
@@ -413,7 +427,7 @@ declare
   v_saldo integer;
 begin
   select * into v from variacoes where id = p_variacao for update;
-  if not found or not eh_membro(v.loja_id) then raise exception 'Peça não encontrada.'; end if;
+  if not found or not eh_gerente(v.loja_id) then raise exception 'Só dono ou gerente mexem no estoque.'; end if;
   if p_tipo = 'entrada' then
     if p_quantidade is null or p_quantidade <= 0 then raise exception 'Informe quantas peças chegaram.'; end if;
     v_delta := p_quantidade;
@@ -578,7 +592,7 @@ declare
   v_par     jsonb;
   v_canais  jsonb;
 begin
-  if not eh_membro(p_loja) then raise exception 'Sem acesso a esta loja.'; end if;
+  if not eh_gerente(p_loja) then raise exception 'Sem acesso ao painel.'; end if;
   v_dono := eh_dono(p_loja);
 
   select jsonb_build_object(
@@ -697,6 +711,17 @@ language sql stable security definer set search_path = public as $$
      and public.eh_membro(p_loja)
    group by v.cliente_id;
 $$;
+
+-- ---------- Papel na equipe ----------------------------------------
+
+create or replace function public.definir_papel(p_loja uuid, p_user uuid, p_papel text)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  if not eh_dono(p_loja) then raise exception 'Só o dono muda o acesso da equipe.'; end if;
+  if p_papel not in ('gerente', 'vendedor') then raise exception 'Acesso inválido.'; end if;
+  update membros set papel = p_papel where loja_id = p_loja and user_id = p_user and papel <> 'dono';
+  if not found then raise exception 'Pessoa não encontrada na equipe.'; end if;
+end $$;
 
 -- ---------- Vendedor da venda (dono corrige depois) -----------------
 
