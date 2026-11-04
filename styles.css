@@ -483,3 +483,22 @@ html, body { max-width: 100%; overflow-x: hidden; }
 .form { grid-template-columns: minmax(0, 1fr); }
 .form .duo { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .produto-venda .grow { min-width: 0; }
+
+/* Tela Hoje */
+.hoje-hero { background: var(--ink); color: var(--bg); border-color: var(--ink); padding: 20px; }
+.hoje-hero .barra { background: color-mix(in srgb, var(--bg) 18%, transparent); }
+.hoje-rot { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; opacity: .7; }
+.hoje-valor { font-size: 40px; font-weight: 800; letter-spacing: -.03em; margin: 6px 0 2px; white-space: nowrap; }
+.hoje-sub { font-size: 14px; opacity: .85; }
+.hoje-meta { margin-top: 16px; padding-top: 14px; border-top: 1px solid color-mix(in srgb, var(--bg) 18%, transparent); }
+.hoje-hero a { color: inherit; text-decoration: underline; }
+.spark { display: block; width: 100%; height: 30px; margin-top: 8px; }
+.sw { display: inline-block; width: 10px; height: 10px; border-radius: 3px; }
+.sete { position: relative; display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 8px; align-items: end; height: 180px; padding-top: 18px; }
+.sete-col { display: flex; flex-direction: column; align-items: center; justify-content: flex-end; height: 100%; gap: 4px; }
+.sete-col i { display: block; width: 70%; max-width: 46px; border-radius: 6px 6px 3px 3px; background: var(--chart); opacity: .55; }
+.sete-col.hoje i { opacity: 1; }
+.sete-v { font-size: 11px; color: var(--ink-2); font-weight: 650; }
+.sete-d { font-size: 11px; color: var(--ink-3); height: 14px; }
+.sete-col.hoje .sete-d { color: var(--ink); font-weight: 750; }
+.sete-meta { position: absolute; left: 0; right: 0; border-top: 1.5px dashed var(--warn); z-index: 1; pointer-events: none; }

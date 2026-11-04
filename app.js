@@ -253,7 +253,7 @@
   const soVendedor = () => !gerente();
   const NOME_PAPEL = { dono: 'Dono(a)', gerente: 'Gerente', vendedor: 'Vendedor(a)' };
   const ROTAS_VENDEDOR = ['vender', 'vendas', 'ajustes'];
-  const rotaInicial = () => (soVendedor() ? '#/vender' : '#/inicio');
+  const rotaInicial = () => (soVendedor() ? '#/vender' : '#/hoje');
   let rotaToken = 0;
   let recuperando = false;
   let promptInstalar = null;
@@ -485,7 +485,7 @@
   // ------------------------------------------------------------------
   function montarShell() {
     const itens = soVendedor() ? [['vendas', 'Minhas vendas', ic.receipt], ['ajustes', 'Minha conta', ic.sliders]] : [
-      ['inicio', 'Início', ic.home], ['vendas', 'Vendas', ic.receipt], ['produtos', 'Produtos e estoque', ic.shirt],
+      ['hoje', 'Hoje', svg('<path d="M3 12h4l3-8 4 16 3-8h4"/>')], ['inicio', 'Mês', ic.home], ['vendas', 'Vendas', ic.receipt], ['produtos', 'Produtos e estoque', ic.shirt],
       ['clientes', 'Clientes', ic.users], ...(dono() ? [['despesas', 'Despesas e lucro', ic.wallet]] : []),
       ['ajustes', 'Loja e equipe', ic.sliders]
     ];
@@ -510,10 +510,10 @@
         <a class="navbtn vender" data-rota="vender" href="#/vender"><span class="bolha">${ic.plus}</span><span>Vender</span></a>
         <a class="navbtn" data-rota="ajustes" href="#/ajustes">${ic.sliders}<span>Conta</span></a>
       </nav>` : `<nav class="bottomnav" aria-label="Menu">
-        <a class="navbtn" data-rota="inicio" href="#/inicio">${ic.home}<span>Início</span></a>
-        <a class="navbtn" data-rota="produtos" href="#/produtos">${ic.shirt}<span>Produtos</span></a>
+        <a class="navbtn" data-rota="hoje" href="#/hoje">${svg('<path d="M3 12h4l3-8 4 16 3-8h4"/>')}<span>Hoje</span></a>
+        <a class="navbtn" data-rota="inicio" href="#/inicio">${ic.home}<span>Mês</span></a>
         <a class="navbtn vender" data-rota="vender" href="#/vender"><span class="bolha">${ic.plus}</span><span>Vender</span></a>
-        <a class="navbtn" data-rota="clientes" href="#/clientes">${ic.users}<span>Clientes</span></a>
+        <a class="navbtn" data-rota="produtos" href="#/produtos">${ic.shirt}<span>Produtos</span></a>
         <a class="navbtn" data-rota="mais" href="#/mais">${ic.dots}<span>Mais</span></a>
       </nav>`}</div>`;
     $('#btn-olho').addEventListener('click', () => {
@@ -571,12 +571,12 @@
     const view = $('#view');
     if (!view) return;
     const partes = location.hash.replace(/^#\/?/, '').split('/');
-    let rota = partes[0] || 'inicio';
+    let rota = partes[0] || (soVendedor() ? 'vender' : 'hoje');
     const arg = partes[1] ? decodeURIComponent(partes[1]) : '';
     if (!TELAS[rota]) rota = 'inicio';
     if (rota === 'despesas' && !dono()) rota = 'inicio';
     if (soVendedor() && !ROTAS_VENDEDOR.includes(rota)) rota = 'vender';
-    const grupoMais = ['vendas', 'despesas', 'ajustes', 'mais'];
+    const grupoMais = ['vendas', 'despesas', 'ajustes', 'mais', 'clientes', 'cliente'];
     $$('[data-rota]').forEach((a) => {
       const r = a.dataset.rota;
       const ativo = r === rota || (r === 'produtos' && rota === 'produto') || (r === 'clientes' && rota === 'cliente') ||
@@ -682,6 +682,115 @@
   // ------------------------------------------------------------------
   // INÍCIO (painel)
   // ------------------------------------------------------------------
+  // ------------------------------------------------------------------
+  // HOJE (como a tela Hoje do App Belor)
+  // ------------------------------------------------------------------
+  function sparkline(vals) {
+    const v = vals.map((x) => Number(x) || 0);
+    if (v.length < 2 || !v.some((x) => x > 0)) return '';
+    const W = 120, H = 30, max = Math.max(...v), min = Math.min(...v), amp = max - min || 1;
+    const pts = v.map((x, i) => `${(i / (v.length - 1) * W).toFixed(1)},${(H - 3 - ((x - min) / amp) * (H - 6)).toFixed(1)}`).join(' ');
+    const ult = pts.split(' ').pop().split(',');
+    return `<svg class="spark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true"><polyline points="${pts}" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"/><circle cx="${ult[0]}" cy="${ult[1]}" r="2.6" fill="var(--accent)"/></svg>`;
+  }
+  function barrasH(itens, total) {
+    const cores = ['var(--chart)', 'var(--info)', 'var(--warn)', '#a66cff', 'var(--ink-3)'];
+    return `<div class="stack">${itens.map(([nome, val, rot], i) => `<div><div class="row between small"><span class="row" style="gap:6px"><i class="sw" style="background:${cores[Math.min(i, 4)]}"></i><b>${esc(nome)}</b></span><span class="num">${rot || money(val)} <span class="faint">· ${pct(val / (total || 1))}</span></span></div>
+      <div class="barra" style="height:6px;margin-top:6px"><i style="width:${(val / (total || 1) * 100).toFixed(1)}%;background:${cores[Math.min(i, 4)]}"></i></div></div>`).join('')}</div>`;
+  }
+
+  TELAS.hoje = async function (v, _, token) {
+    const agora = new Date(), hoje = inicioDia(agora);
+    v.innerHTML = `<div class="card hoje-hero"><div class="esqueleto" style="height:120px"></div></div>
+      <div class="grid k4" style="margin-top:12px">${'<div class="card kpi"><div class="esqueleto" style="height:58px"></div></div>'.repeat(4)}</div>`;
+    const ini = addDias(hoje, -13);
+    const [vendas, novos] = await Promise.all([
+      run(sb.from('vendas').select('id, data, total, pecas, cliente_id, forma_pagamento, parcelas, vendedor_nome, canal, status')
+        .eq('loja_id', S.loja.id).eq('status', 'concluida').gte('data', ini.toISOString()).order('data')),
+      run(sb.from('clientes').select('origem, created_at').eq('loja_id', S.loja.id).gte('created_at', hoje.toISOString()))
+    ]);
+    if (!vivo(token)) return;
+    const porDia = {};
+    vendas.forEach((x) => {
+      const k = isoData(new Date(x.data));
+      const d = porDia[k] = porDia[k] || { fat: 0, vendas: 0, pecas: 0, comCad: 0 };
+      d.fat += Number(x.total); d.vendas += 1; d.pecas += x.pecas; if (x.cliente_id) d.comCad += 1;
+    });
+    const kHoje = isoData(hoje);
+    const h = porDia[kHoje] || { fat: 0, vendas: 0, pecas: 0, comCad: 0 };
+    const vHoje = vendas.filter((x) => isoData(new Date(x.data)) === kHoje);
+    let kOntem = null;
+    for (let i = 1; i <= 13; i++) { const k = isoData(addDias(hoje, -i)); if (porDia[k]) { kOntem = k; break; } }
+    const o = kOntem ? porDia[kOntem] : null;
+    const meta = Number(S.loja.meta_mensal) || 0;
+    const metaDia = meta ? meta / diasNoMes(agora) : 0;
+    const prog = metaDia ? h.fat / metaDia : 0;
+    const falta = Math.max(0, metaDia - h.fat);
+    const ticket = h.vendas ? h.fat / h.vendas : 0;
+    const pa = h.vendas ? h.pecas / h.vendas : 0;
+    const ticketRef = ticket || (o && o.vendas ? o.fat / o.vendas : 0);
+    const comp = (a, b) => { if (!b) return ''; const d = (a - b) / b; return `<span class="${d >= 0 ? 'up' : 'down'}">${d >= 0 ? '▲' : '▼'} ${pct(Math.abs(d))}</span> vs ${fmtDataCurta(dataLocal(kOntem))}`; };
+    const dias14 = Array.from({ length: 14 }, (_, i) => isoData(addDias(hoje, i - 13)));
+    const serieVendas = dias14.slice(-7).map((k) => (porDia[k] ? porDia[k].vendas : 0));
+    const serieTicket = dias14.filter((k) => porDia[k]).map((k) => porDia[k].fat / porDia[k].vendas).slice(-7);
+    const DS = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'];
+
+    let html = `<div class="page-head"><div><h1>${saudacao()}, ${esc(primeiroNome(S.m.nome))}</h1><p class="sub">Hoje · ${esc(S.loja.nome)}</p></div></div>
+      <div class="card hoje-hero">
+      <div class="hoje-rot">Vendido hoje · ${DIAS[hoje.getDay()]}, ${fmtDataCurta(hoje)}</div>
+      <div class="hoje-valor num">${money(h.fat)}</div>
+      <div class="hoje-sub"><b>${h.vendas}</b> ${h.vendas === 1 ? 'venda' : 'vendas'}${ticket ? ` · ticket <b>${money(ticket)}</b>` : ''}${pa ? ` · PA <b>${n1(pa)}</b>` : ''}</div>
+      ${metaDia ? `<div class="hoje-meta"><div class="row between small"><span>Meta do dia <b>${money(metaDia)}</b></span><b>${pct(prog)}</b></div>
+        <div class="barra ${prog >= 1 ? '' : prog >= 0.85 ? 'warn' : 'danger'}" style="margin:8px 0"><i style="width:${Math.min(100, prog * 100).toFixed(1)}%"></i></div>
+        <div class="small">${prog >= 1 ? `Meta do dia batida! <b>+${money(h.fat - metaDia)}</b>` : `Faltam <b>${money(falta)}</b> pra meta do dia${ticketRef ? ` · umas <b>${Math.ceil(falta / ticketRef)}</b> vendas` : ''}`}</div></div>`
+        : (dono() ? '<a class="small" href="#/ajustes">Defina a meta do mês para ver a meta do dia →</a>' : '')}
+    </div>`;
+    html += `<div class="grid k4" style="margin-top:12px">
+      <div class="card kpi"><div class="rotulo">Vendas</div><div class="valor">${h.vendas}</div><div class="det">${o ? comp(h.vendas, o.vendas) : 'últimos 7 dias'}</div>${sparkline(serieVendas)}</div>
+      <div class="card kpi"><div class="rotulo">Ticket médio</div><div class="valor">${ticket ? money(ticket) : '–'}</div><div class="det">${o && ticket ? comp(ticket, o.fat / o.vendas) : 'por venda'}</div>${sparkline(serieTicket)}</div>
+      <div class="card kpi"><div class="rotulo">Peças por cliente</div><div class="valor">${pa ? n1(pa) : '–'}</div><div class="det">${plural(h.pecas, 'peça', 'peças')} hoje</div></div>
+      <div class="card kpi"><div class="rotulo">Cadastros</div><div class="valor">${h.vendas ? `${h.comCad}<small class="faint" style="font-size:15px"> de ${h.vendas}</small>` : '–'}</div><div class="det">${h.vendas ? `<span class="${h.comCad / h.vendas >= 0.9 ? 'up' : 'down'}">${pct(h.comCad / h.vendas)}</span> das vendas com cadastro` : 'sem vendas ainda'}</div></div>
+    </div>`;
+    html += '<div class="grid c2" style="margin-top:12px">';
+    if (novos.length) {
+      const oc = {};
+      novos.forEach((c) => { const k = c.origem || 'Não informado'; oc[k] = (oc[k] || 0) + 1; });
+      const it = Object.entries(oc).sort((a, b) => b[1] - a[1]).map(([n, q]) => [n, q, plural(q, 'cliente', 'clientes')]);
+      html += `<div class="card"><h2>Clientes novos hoje <span class="acao faint">${plural(novos.length, 'cadastrado', 'cadastrados')}</span></h2>${barrasH(it, novos.length)}</div>`;
+    }
+    const pv = {};
+    vHoje.forEach((x) => { const k = x.vendedor_nome || '—'; pv[k] = (pv[k] || 0) + Number(x.total); });
+    if (vHoje.length) html += `<div class="card"><h2>Por vendedor <span class="acao faint">hoje</span></h2>${barrasH(Object.entries(pv).sort((a, b) => b[1] - a[1]), h.fat)}</div>`;
+    const pf = {};
+    vHoje.forEach((x) => { pf[x.forma_pagamento] = (pf[x.forma_pagamento] || 0) + Number(x.total); });
+    if (vHoje.length) html += `<div class="card"><h2>Formas de pagamento <span class="acao faint">hoje</span></h2>${barrasH(Object.entries(pf).sort((a, b) => b[1] - a[1]), h.fat)}</div>`;
+    const pc = {};
+    vHoje.forEach((x) => { const k = x.canal || 'Loja física'; pc[k] = (pc[k] || 0) + Number(x.total); });
+    if (Object.keys(pc).length > 1) html += `<div class="card"><h2>Onde vendeu <span class="acao faint">hoje</span></h2>${barrasH(Object.entries(pc).sort((a, b) => b[1] - a[1]), h.fat)}</div>`;
+    html += '</div>';
+    // últimos 7 dias
+    const ult7 = dias14.slice(-7).map((k) => ({ k, fat: porDia[k] ? porDia[k].fat : 0, vendas: porDia[k] ? porDia[k].vendas : 0 }));
+    const max = Math.max(1, metaDia, ...ult7.map((x) => x.fat)) * 1.1;
+    html += `<div class="card" style="margin-top:12px"><h2>Últimos 7 dias ${metaDia ? `<span class="acao faint">meta/dia ${brl(metaDia)}</span>` : ''}</h2>
+      <div class="sete">${metaDia ? `<i class="sete-meta" style="bottom:calc(22px + ${(metaDia / max * 130).toFixed(1)}px)"></i>` : ''}${ult7.map((x) => `
+        <div class="sete-col ${x.k === kHoje ? 'hoje' : ''}" title="${cap(DIAS[dataLocal(x.k).getDay()])}, ${fmtDataCurta(dataLocal(x.k))}: ${brl(x.fat)} · ${plural(x.vendas, 'venda', 'vendas')}">
+          <span class="sete-v num">${x.fat ? (x.fat >= 1000 ? (x.fat / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + 'k' : Math.round(x.fat)) : ''}</span>
+          <i style="height:${Math.max(x.fat ? 4 : 2, x.fat / max * 130).toFixed(1)}px"></i><span class="sete-d">${DS[dataLocal(x.k).getDay()]}</span></div>`).join('')}</div>
+      ${metaDia ? '<p class="tiny faint" style="margin-top:6px">A linha tracejada é a meta do dia.</p>' : ''}</div>`;
+    if (o) {
+      const tk = o.fat / o.vendas;
+      html += `<div class="card" style="margin-top:12px"><h2>Último dia de venda <span class="acao faint">${cap(DIAS[dataLocal(kOntem).getDay()])}, ${fmtDataCurta(dataLocal(kOntem))}</span></h2>
+        <div class="lista">
+          <div class="item" style="cursor:default"><span class="grow">Faturamento</span><b class="num">${money(o.fat)}</b></div>
+          <div class="item" style="cursor:default"><span class="grow">Vendas</span><b class="num">${o.vendas}</b></div>
+          <div class="item" style="cursor:default"><span class="grow">Ticket médio</span><b class="num">${money(tk)}</b></div>
+          <div class="item" style="cursor:default"><span class="grow">Peças por cliente</span><b class="num">${n1(o.pecas / o.vendas)}</b></div>
+          ${metaDia ? `<div class="item" style="cursor:default"><span class="grow">x meta do dia</span><span class="badge ${o.fat >= metaDia ? 'ok' : o.fat >= metaDia * 0.85 ? 'warn' : 'danger'}">${pct(o.fat / metaDia)}</span></div>` : ''}
+        </div></div>`;
+    }
+    v.innerHTML = html;
+  };
+
   TELAS.inicio = async function (v, _, token) {
     const agora = new Date();
     v.innerHTML = `<div class="page-head"><div><h1>${saudacao()}, ${esc(primeiroNome(S.m.nome))}</h1>
@@ -2215,6 +2324,7 @@
   // MAIS (menu do celular)
   TELAS.mais = function (v) {
     const itens = [
+      ['#/clientes', ic.users, 'Clientes', 'Cadastro, sumidos, aniversariantes'],
       ['#/vendas', ic.receipt, 'Vendas', 'Histórico, detalhes e cancelamentos'],
       ...(dono() ? [['#/despesas', ic.wallet, 'Despesas e lucro', 'Aluguel, contas e quanto sobra']] : []),
       ['#/ajustes', ic.sliders, 'Loja e equipe', 'Dados da loja, meta, convite da equipe']
