@@ -500,6 +500,7 @@
         <header class="topbar" id="topbar">
           <div class="brand"><div class="logo">${LOGO}</div></div>
           <button class="loja-switch grow" id="btn-loja" type="button"><span class="ellipsis">${esc(S.loja.nome)}</span>${ic.chevDown.replace('<svg', '<svg style="width:16px;height:16px;flex:none"')}</button>
+          <button class="icon-btn" id="btn-atualizar" type="button" aria-label="Atualizar o app" title="Atualizar">${svg('<path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 4v7h-7"/>')}</button>
           <button class="icon-btn" id="btn-olho" type="button" aria-label="Esconder valores" title="Esconder valores">${S.ocultar ? ic.eyeOff : ic.eye}</button>
         </header>
         <main class="view" id="view"></main>
@@ -523,6 +524,17 @@
       toast(S.ocultar ? 'Valores escondidos.' : 'Valores à mostra.');
     });
     $('#btn-loja').addEventListener('click', trocarLoja);
+    $('#btn-atualizar').addEventListener('click', atualizarApp);
+  }
+
+  async function atualizarApp() {
+    const b = $('#btn-atualizar');
+    if (b) b.classList.add('girando');
+    try {
+      const reg = 'serviceWorker' in navigator ? await navigator.serviceWorker.getRegistration() : null;
+      if (reg) await reg.update().catch(() => {});
+    } catch (e) { /* segue */ }
+    location.reload();
   }
 
   function trocarLoja() {
@@ -553,6 +565,9 @@
   const TELAS = {};
   function rotear() {
     if (!S.loja || recuperando) return;
+    $$('.overlay').forEach((o) => o.remove());
+    document.body.style.overflow = '';
+    folhaCarrinho = null;
     const view = $('#view');
     if (!view) return;
     const partes = location.hash.replace(/^#\/?/, '').split('/');
@@ -917,6 +932,18 @@
       <button class="barra-carrinho hidden" type="button" id="barra-carrinho"></button>`;
     renderCarrinho();
     const produtos = (await carregarProdutos()).filter((p) => p.ativo);
+    if (S.carrinho.length) {
+      const est = {};
+      produtos.forEach((p) => p.variacoes.forEach((x) => { est[x.id] = x.estoque; }));
+      let mudou = false;
+      S.carrinho = S.carrinho.filter((i) => {
+        if (!(i.variacao_id in est)) { mudou = true; return false; }
+        i.estoque = est[i.variacao_id];
+        if (i.qtd > i.estoque) { i.qtd = Math.max(0, i.estoque); mudou = true; }
+        return i.qtd > 0;
+      });
+      if (mudou) { salvarCarrinho(); renderCarrinho(); toast('O carrinho foi ajustado ao estoque atual.'); }
+    }
     if (!vivo(token)) return;
     const lista = $('#lista-venda');
     if (!produtos.length) {
@@ -975,14 +1002,14 @@
     p.variacoes.forEach((x) => { (porCor[x.cor || ''] = porCor[x.cor || ''] || []).push(x); });
     abrirFolha(`${cabFolha(esc(p.nome), money(p.preco))}
       ${Object.keys(porCor).map((cor) => `${cor ? `<h3 style="margin:6px 0 8px">${esc(cor)}</h3>` : ''}<div class="opcoes-var" style="margin-bottom:12px">
-        ${porCor[cor].map((x) => `<button class="opcao-var ${x.estoque <= 0 ? 'sem' : ''}" type="button" data-var="${x.id}"><b>${esc(x.tamanho)}</b><span>${x.estoque > 0 ? plural(x.estoque, 'peça', 'peças') : 'sem estoque'}</span></button>`).join('')}
+        ${porCor[cor].map((x) => { const resta = x.estoque - noCarrinho(x.id); return `<button class="opcao-var ${resta <= 0 ? 'sem' : ''}" type="button" data-var="${x.id}" ${resta <= 0 ? 'aria-disabled="true"' : ''}><b>${esc(x.tamanho)}</b><span>${x.estoque <= 0 ? 'sem estoque' : resta <= 0 ? 'todas no carrinho' : plural(resta, 'peça', 'peças')}</span></button>`; }).join('')}
       </div>`).join('')}`, {
       aoAbrir: (f, fechar) => {
         $$('[data-var]', f).forEach((b) => b.addEventListener('click', async () => {
           const x = p.variacoes.find((vv) => vv.id === b.dataset.var);
-          if (x.estoque <= 0) {
-            const ok = await confirmar('Sem estoque registrado', { detalhe: `O sistema mostra 0 peças de ${esc(rotuloVar(x))}. Vender mesmo assim? (o estoque fica negativo até você corrigir)`, ok: 'Vender mesmo assim' });
-            if (!ok) return;
+          if (x.estoque - noCarrinho(x.id) <= 0) {
+            toast(x.estoque <= 0 ? `${rotuloVar(x)} está sem estoque.` : `Só tem ${plural(x.estoque, 'peça', 'peças')} de ${rotuloVar(x)}, e todas já estão no carrinho.`, 'erro');
+            return;
           }
           fechar();
           adicionarAoCarrinho(p, x);
@@ -991,9 +1018,14 @@
     });
   }
 
+  const noCarrinho = (vid) => S.carrinho.filter((i) => i.variacao_id === vid).reduce((t, i) => t + i.qtd, 0);
   function adicionarAoCarrinho(p, x) {
+    if (x.estoque - noCarrinho(x.id) <= 0) {
+      toast(x.estoque <= 0 ? `${p.nome} ${rotuloVar(x)} está sem estoque.` : `Só tem ${plural(x.estoque, 'peça', 'peças')} de ${p.nome} ${rotuloVar(x)}.`, 'erro');
+      return;
+    }
     const item = S.carrinho.find((i) => i.variacao_id === x.id);
-    if (item) item.qtd += 1;
+    if (item) { item.qtd += 1; item.estoque = x.estoque; }
     else S.carrinho.push({ variacao_id: x.id, produto_id: p.id, nome: p.nome, tamanho: x.tamanho, cor: x.cor, preco: p.preco, qtd: 1, estoque: x.estoque });
     salvarCarrinho();
     renderCarrinho();
@@ -1023,7 +1055,9 @@
         if (!(await confirmar('Limpar o carrinho?', { ok: 'Limpar', perigo: true }))) return;
         S.carrinho = [];
       } else if (b.dataset.mais !== undefined) {
-        S.carrinho[+b.dataset.mais].qtd += 1;
+        const it = S.carrinho[+b.dataset.mais];
+        if (it.qtd >= it.estoque) { toast(`Só tem ${plural(Math.max(it.estoque, 0), 'peça', 'peças')} de ${it.nome} ${rotuloVar(it)} em estoque.`, 'erro'); return; }
+        it.qtd += 1;
       } else if (b.dataset.menos !== undefined) {
         const i = S.carrinho[+b.dataset.menos];
         i.qtd -= 1;
@@ -1202,8 +1236,8 @@
           S.resumoClientes = null;
           S.clientes = null;
           fechar();
-          vendaConcluida(r, carrinhoAntes, { sub, desconto: desconto(), forma: st.forma, parcelas: st.parcelas, cliente: st.cliente, canal: st.canal, data: st.data === hojeIso ? null : st.data });
           if (location.hash === '#/vender') rotear();
+          vendaConcluida(r, carrinhoAntes, { sub, desconto: desconto(), forma: st.forma, parcelas: st.parcelas, cliente: st.cliente, canal: st.canal, data: st.data === hojeIso ? null : st.data });
         } catch (err) { erro.textContent = msgErro(err); erro.classList.remove('hidden'); }
       });
     });

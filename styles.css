@@ -467,3 +467,19 @@ textarea.input { min-height: 80px; resize: vertical; }
 .check-row input { width: 22px; height: 22px; margin: 1px 0 0; accent-color: var(--accent); flex: none; }
 .check-row b { display: block; font-size: 14.5px; }
 .check-row small { display: block; color: var(--ink-2); font-size: 12.5px; margin-top: 2px; }
+
+/* Correção: nada pode alargar a tela no celular */
+.caixa > *, .grid > *, .principal, .view { min-width: 0; }
+.caixa { grid-template-columns: minmax(0, 1fr); }
+@media (min-width: 900px) { .caixa { grid-template-columns: minmax(0, 1fr) 380px; } .shell { grid-template-columns: 248px minmax(0, 1fr); } }
+.chips.rolar { max-width: 100%; }
+html, body { max-width: 100%; overflow-x: hidden; }
+.opcao-var.sem { cursor: not-allowed; }
+.topbar .icon-btn + .icon-btn { margin-left: -2px; }
+#btn-atualizar.girando svg { animation: gira .7s linear infinite; }
+.lista-venda { grid-template-columns: minmax(0, 1fr); }
+@media (min-width: 700px) { .lista-venda { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.lista-venda > *, .form > *, .campo, .stack > *, .card { min-width: 0; }
+.form { grid-template-columns: minmax(0, 1fr); }
+.form .duo { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.produto-venda .grow { min-width: 0; }
