@@ -741,7 +741,7 @@
       <div class="hoje-valor num">${money(h.fat)}</div>
       <div class="hoje-sub"><b>${h.vendas}</b> ${h.vendas === 1 ? 'venda' : 'vendas'}${ticket ? ` · ticket <b>${money(ticket)}</b>` : ''}${pa ? ` · PA <b>${n1(pa)}</b>` : ''}</div>
       ${metaDia ? `<div class="hoje-meta"><div class="row between small"><span>Meta do dia <b>${money(metaDia)}</b></span><b>${pct(prog)}</b></div>
-        <div class="barra ${prog >= 1 ? '' : prog >= 0.85 ? 'warn' : 'danger'}" style="margin:8px 0"><i style="width:${Math.min(100, prog * 100).toFixed(1)}%"></i></div>
+        <div class="barra ${prog >= 1 ? 'ok' : ''}" style="margin:8px 0"><i style="width:${Math.min(100, prog * 100).toFixed(1)}%"></i></div>
         <div class="small">${prog >= 1 ? `Meta do dia batida! <b>+${money(h.fat - metaDia)}</b>` : `Faltam <b>${money(falta)}</b> pra meta do dia${ticketRef ? ` · umas <b>${Math.ceil(falta / ticketRef)}</b> vendas` : ''}`}</div></div>`
         : (dono() ? '<a class="small" href="#/ajustes">Defina a meta do mês para ver a meta do dia →</a>' : '')}
     </div>`;

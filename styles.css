@@ -502,3 +502,57 @@ html, body { max-width: 100%; overflow-x: hidden; }
 .sete-d { font-size: 11px; color: var(--ink-3); height: 14px; }
 .sete-col.hoje .sete-d { color: var(--ink); font-weight: 750; }
 .sete-meta { position: absolute; left: 0; right: 0; border-top: 1.5px dashed var(--warn); z-index: 1; pointer-events: none; }
+
+/* ===== Paleta Belor (preto + dourado) ===== */
+:root {
+  --bg: #f3f2ee; --surface: #ffffff; --surface-2: #f8f7f4; --line: #e4e2db;
+  --ink: #0b0b0b; --ink-2: #52514e; --ink-3: #7c7a74;
+  --accent: #a07c2c; --accent-2: #83631d; --accent-ink: #ffffff; --accent-soft: rgba(160,124,44,.11);
+  --good: #006300; --danger: #b42323; --danger-soft: rgba(208,59,59,.10);
+  --warn: #8a5a00; --warn-soft: rgba(250,178,25,.16); --info: #2a78d6; --info-soft: rgba(42,120,214,.10);
+  --chart: #a07c2c; --chart-2: #eee6d3; --hero-brilho: rgba(160,124,44,.14);
+  --shadow: 0 8px 24px rgba(20,16,8,.08);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0a0a0a; --surface: #141413; --surface-2: #1b1b1a; --line: #262624;
+    --ink: #f4f2ed; --ink-2: #bdb9af; --ink-3: #8c887f;
+    --accent: #d6b25e; --accent-2: #ecca7c; --accent-ink: #151007; --accent-soft: rgba(214,178,94,.13);
+    --good: #3fcf5c; --danger: #ff7070; --danger-soft: rgba(208,59,59,.17);
+    --warn: #fab219; --warn-soft: rgba(250,178,25,.15); --info: #3987e5; --info-soft: rgba(57,135,229,.14);
+    --chart: #d6b25e; --chart-2: #3a3222; --hero-brilho: rgba(214,178,94,.16);
+    --shadow: 0 10px 30px rgba(0,0,0,.45);
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0a0a0a; --surface: #141413; --surface-2: #1b1b1a; --line: #262624;
+  --ink: #f4f2ed; --ink-2: #bdb9af; --ink-3: #8c887f;
+  --accent: #d6b25e; --accent-2: #ecca7c; --accent-ink: #151007; --accent-soft: rgba(214,178,94,.13);
+  --good: #3fcf5c; --danger: #ff7070; --danger-soft: rgba(208,59,59,.17);
+  --warn: #fab219; --warn-soft: rgba(250,178,25,.15); --info: #3987e5; --info-soft: rgba(57,135,229,.14);
+  --chart: #d6b25e; --chart-2: #3a3222; --hero-brilho: rgba(214,178,94,.16);
+}
+.up { color: var(--good); }
+.kpi.destaque .up { color: var(--good); }
+.kpi.destaque .down { color: var(--danger); }
+/* Cartão de destaque como o da Belor: escuro com brilho dourado, nunca branco */
+.hoje-hero, .kpi.destaque {
+  background: radial-gradient(120% 140% at 100% 0%, var(--hero-brilho), transparent 55%), var(--surface);
+  color: var(--ink); border-color: var(--line);
+}
+.hoje-hero .hoje-rot, .kpi.destaque .rotulo { color: var(--ink-2); opacity: 1; }
+.hoje-hero .hoje-sub, .kpi.destaque .det { color: var(--ink-2); opacity: 1; }
+.hoje-hero .hoje-sub b { color: var(--ink); }
+.hoje-meta { border-top-color: var(--line); }
+.hoje-hero .barra { background: var(--surface-2); }
+.hoje-hero .barra > i, .barra > i { background: linear-gradient(90deg, var(--accent), var(--accent-2)); }
+.hoje-hero .barra.ok > i { background: linear-gradient(90deg, #14a614, #3fcf5c); }
+.barra.warn > i { background: var(--warn); }
+.barra.danger > i { background: var(--danger); }
+.brand .logo, .entrada-logo .logo { background: #0b0b0b; color: #d6b25e; border: 1px solid var(--line); }
+.brand .logo svg circle:last-child, .entrada-logo .logo svg circle:last-child { fill: #0b0b0b; }
+.chip.ativo { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.toast { background: var(--surface-2); color: var(--ink); border: 1px solid var(--accent); }
+.toast.erro { background: var(--danger); color: #fff; border-color: var(--danger); }
+.barra-carrinho { background: var(--surface-2); color: var(--ink); border: 1px solid var(--accent); }
+.btn.escuro { background: var(--surface-2); border-color: var(--line); color: var(--ink); }
