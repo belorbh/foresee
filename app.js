@@ -693,10 +693,29 @@
     const ult = pts.split(' ').pop().split(',');
     return `<svg class="spark" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" aria-hidden="true"><polyline points="${pts}" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" vector-effect="non-scaling-stroke"/><circle cx="${ult[0]}" cy="${ult[1]}" r="2.6" fill="var(--accent)"/></svg>`;
   }
-  function barrasH(itens, total) {
-    const cores = ['var(--chart)', 'var(--info)', 'var(--warn)', '#a66cff', 'var(--ink-3)'];
-    return `<div class="stack">${itens.map(([nome, val, rot], i) => `<div><div class="row between small"><span class="row" style="gap:6px"><i class="sw" style="background:${cores[Math.min(i, 4)]}"></i><b>${esc(nome)}</b></span><span class="num">${rot || money(val)} <span class="faint">· ${pct(val / (total || 1))}</span></span></div>
-      <div class="barra" style="height:6px;margin-top:6px"><i style="width:${(val / (total || 1) * 100).toFixed(1)}%;background:${cores[Math.min(i, 4)]}"></i></div></div>`).join('')}</div>`;
+  const COR_FORMA = { Pix: 'var(--s1)', Dinheiro: 'var(--s2)', 'Crédito': 'var(--s3)', 'Débito': 'var(--s4)' };
+  function barrasH(itens, total, porNome) {
+    let i = 0;
+    const cor = (n) => (porNome && porNome[n]) || (/^(—|outros?|não informado)$/i.test(n) ? 'var(--ghost)' : ['var(--s1)', 'var(--s2)', 'var(--s3)', 'var(--s4)'][Math.min(3, i++)]);
+    return `<div class="hbars">${itens.map(([nome, val, rot]) => { const c = cor(nome); return `<div><div class="hb-top"><span><i class="sw" style="background:${c}"></i>${esc(nome)}</span><span>${rot || money(val)} <i>· ${pct(val / (total || 1))}</i></span></div>
+      <div class="hb-track"><div class="hb-fill" style="width:${(val / (total || 1) * 100).toFixed(1)}%;background:${c}"></div></div></div>`; }).join('')}</div>`;
+  }
+  function escala(v) { if (!(v > 0)) v = 1; const alvo = v / 5, p = Math.pow(10, Math.floor(Math.log10(alvo))); const step = [1, 2, 2.5, 5, 10].map((x) => x * p).find((x) => x >= alvo); const n = Math.max(1, Math.ceil(v / step - 1e-9)); return { max: n * step, step, n }; }
+  const tkFmt = (v) => (S.ocultar ? '' : v >= 1000 ? (v / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + 'k' : Math.round(v).toLocaleString('pt-BR'));
+  function barrasBelor(itens, o = {}) {
+    const W = 340, H = o.h || 168, pl = 30, pr = 6, pt = 14, pb = 22, iw = W - pl - pr, ih = H - pt - pb;
+    const E = escala(Math.max(o.meta || 0, ...itens.map((it) => it.v || 0)) * 1.06), mx = E.max;
+    const step = iw / Math.max(1, itens.length), bw = Math.max(2, Math.min(18, step - 2));
+    const Y = (v) => pt + ih - (v / mx) * ih;
+    let sv = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(o.aria || 'gráfico')}">`;
+    for (let k = 0; k <= E.n; k++) { const v = E.step * k, y = Y(v); sv += `<line class="${k ? 'gl' : 'ax'}" x1="${pl}" x2="${W - pr}" y1="${y}" y2="${y}"/><text class="tk" x="${pl - 5}" y="${y + 3}" text-anchor="end">${tkFmt(v)}</text>`; }
+    itens.forEach((it, i) => {
+      const x = pl + i * step + (step - bw) / 2, v = it.v || 0, y = Y(v), h = pt + ih - y, r = Math.min(4, bw / 2, h);
+      if (v > 0) sv += `<path class="bar ${it.cls || ''}" d="M${x},${pt + ih} V${y + r} Q${x},${y} ${x + r},${y} H${x + bw - r} Q${x + bw},${y} ${x + bw},${y + r} V${pt + ih} Z"><title>${esc(it.t || '')}</title></path>`;
+      if (it.tick) sv += `<text class="tk ${it.cls || ''}" x="${x + bw / 2}" y="${H - 6}" text-anchor="middle">${esc(it.tick)}</text>`;
+    });
+    if (o.meta) sv += `<line class="tgt" x1="${pl}" x2="${W - pr}" y1="${Y(o.meta)}" y2="${Y(o.meta)}"/>`;
+    return `<div class="chart-b">${sv}</svg></div>`;
   }
 
   TELAS.hoje = async function (v, _, token) {
@@ -763,20 +782,16 @@
     if (vHoje.length) html += `<div class="card"><h2>Por vendedor <span class="acao faint">hoje</span></h2>${barrasH(Object.entries(pv).sort((a, b) => b[1] - a[1]), h.fat)}</div>`;
     const pf = {};
     vHoje.forEach((x) => { pf[x.forma_pagamento] = (pf[x.forma_pagamento] || 0) + Number(x.total); });
-    if (vHoje.length) html += `<div class="card"><h2>Formas de pagamento <span class="acao faint">hoje</span></h2>${barrasH(Object.entries(pf).sort((a, b) => b[1] - a[1]), h.fat)}</div>`;
+    if (vHoje.length) html += `<div class="card"><h2>Formas de pagamento <span class="acao faint">hoje</span></h2>${barrasH(Object.entries(pf).sort((a, b) => b[1] - a[1]), h.fat, COR_FORMA)}</div>`;
     const pc = {};
     vHoje.forEach((x) => { const k = x.canal || 'Loja física'; pc[k] = (pc[k] || 0) + Number(x.total); });
     if (Object.keys(pc).length > 1) html += `<div class="card"><h2>Onde vendeu <span class="acao faint">hoje</span></h2>${barrasH(Object.entries(pc).sort((a, b) => b[1] - a[1]), h.fat)}</div>`;
     html += '</div>';
     // últimos 7 dias
     const ult7 = dias14.slice(-7).map((k) => ({ k, fat: porDia[k] ? porDia[k].fat : 0, vendas: porDia[k] ? porDia[k].vendas : 0 }));
-    const max = Math.max(1, metaDia, ...ult7.map((x) => x.fat)) * 1.1;
     html += `<div class="card" style="margin-top:12px"><h2>Últimos 7 dias ${metaDia ? `<span class="acao faint">meta/dia ${brl(metaDia)}</span>` : ''}</h2>
-      <div class="sete">${metaDia ? `<i class="sete-meta" style="bottom:calc(22px + ${(metaDia / max * 130).toFixed(1)}px)"></i>` : ''}${ult7.map((x) => `
-        <div class="sete-col ${x.k === kHoje ? 'hoje' : ''}" title="${cap(DIAS[dataLocal(x.k).getDay()])}, ${fmtDataCurta(dataLocal(x.k))}: ${brl(x.fat)} · ${plural(x.vendas, 'venda', 'vendas')}">
-          <span class="sete-v num">${x.fat ? (x.fat >= 1000 ? (x.fat / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + 'k' : Math.round(x.fat)) : ''}</span>
-          <i style="height:${Math.max(x.fat ? 4 : 2, x.fat / max * 130).toFixed(1)}px"></i><span class="sete-d">${DS[dataLocal(x.k).getDay()]}</span></div>`).join('')}</div>
-      ${metaDia ? '<p class="tiny faint" style="margin-top:6px">A linha tracejada é a meta do dia.</p>' : ''}</div>`;
+      ${barrasBelor(ult7.map((x) => ({ v: x.fat, tick: DS[dataLocal(x.k).getDay()], cls: x.k === kHoje ? 'today' : '', t: `${cap(DIAS[dataLocal(x.k).getDay()])}, ${fmtDataCurta(dataLocal(x.k))}: ${brl(x.fat)} · ${plural(x.vendas, 'venda', 'vendas')}` })), { meta: metaDia, h: 150, aria: 'Faturamento dos últimos 7 dias' })}
+      <div class="legenda"><span><i style="background:var(--gold)"></i>Faturamento</span>${metaDia ? '<span><i class="tracejado"></i>Meta do dia</span>' : ''}</div></div>`;
     if (o) {
       const tk = o.fat / o.vendas;
       html += `<div class="card" style="margin-top:12px"><h2>Último dia de venda <span class="acao faint">${cap(DIAS[dataLocal(kOntem).getDay()])}, ${fmtDataCurta(dataLocal(kOntem))}</span></h2>

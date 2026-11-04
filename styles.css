@@ -556,3 +556,33 @@ html, body { max-width: 100%; overflow-x: hidden; }
 .toast.erro { background: var(--danger); color: #fff; border-color: var(--danger); }
 .barra-carrinho { background: var(--surface-2); color: var(--ink); border: 1px solid var(--accent); }
 .btn.escuro { background: var(--surface-2); border-color: var(--line); color: var(--ink); }
+
+/* ===== Gráficos e barras iguais ao App Belor ===== */
+:root { --gold: #a07c2c; --gold-strong: #83631d; --surface-3: #eeece6; --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #eda100; --grid: #e6e4dd; --axis: #c3c2b7; --ghost: #b7b4ab; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --gold: #d6b25e; --gold-strong: #ecca7c; --surface-3: #242422; --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --grid: #2c2c2a; --axis: #3a3a37; --ghost: #5d5a53; } }
+:root[data-theme="dark"] { --gold: #d6b25e; --gold-strong: #ecca7c; --surface-3: #242422; --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --grid: #2c2c2a; --axis: #3a3a37; --ghost: #5d5a53; }
+.hbars { display: grid; gap: 12px; }
+.hb-top { display: flex; justify-content: space-between; font-size: 13px; font-weight: 600; margin-bottom: 6px; gap: 8px; }
+.hb-top span:last-child { color: var(--ink-2); white-space: nowrap; }
+.hb-top i { font-style: normal; color: var(--ink-3); font-weight: 500; }
+.hb-track { height: 8px; border-radius: 4px; background: var(--surface-3); overflow: hidden; }
+.hb-fill { height: 100%; border-radius: 4px; }
+.sw { width: 9px; height: 9px; border-radius: 3px; margin-right: 7px; vertical-align: 0; }
+.chart-b svg { display: block; width: 100%; overflow: visible; }
+.chart-b .gl { stroke: var(--grid); stroke-width: 1; }
+.chart-b .ax { stroke: var(--axis); stroke-width: 1; }
+.chart-b .tk { fill: var(--ink-3); font-size: 10px; font-weight: 600; }
+.chart-b .tk.today { fill: var(--ink); font-weight: 800; }
+.chart-b .bar { fill: var(--gold); }
+.chart-b .bar.today { fill: var(--gold-strong); }
+.chart-b .tgt { stroke: var(--ink-2); stroke-width: 1.5; stroke-dasharray: 4 4; fill: none; }
+.legenda { display: flex; gap: 16px; margin-top: 8px; font-size: 12px; color: var(--ink-3); font-weight: 600; }
+.legenda span { display: inline-flex; align-items: center; gap: 6px; }
+.legenda i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; }
+.legenda i.tracejado { width: 16px; height: 0; border-top: 1.5px dashed var(--ink-2); border-radius: 0; }
+.hoje-hero .barra { height: 10px; background: var(--surface-3); }
+.hoje-hero .barra > i { background: linear-gradient(90deg, var(--gold), var(--gold-strong)); }
+
+/* Correção iPhone: a barra de baixo não pode "soltar" no meio da tela */
+html { overflow-x: visible; max-width: none; }
+body { overflow-x: clip; }
