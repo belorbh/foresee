@@ -855,6 +855,7 @@ end $$;
 
 revoke all on all tables in schema public from anon;
 grant select, insert, update, delete on all tables in schema public to authenticated;
+grant select, insert, update, delete on all tables in schema public to service_role;  -- servidor (notificações)
 
 revoke execute on all functions in schema public from public;
 revoke execute on all functions in schema public from anon;
