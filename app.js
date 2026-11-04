@@ -594,6 +594,51 @@
     return S.produtos;
   }
 
+  // ---------- Notificações de venda (push) ----------
+  const FN_PUSH = (CFG.url || '') + '/functions/v1/notificar-venda';
+  async function chamarPush(method, body) {
+    const sessao = (await sb.auth.getSession()).data.session;
+    const r = await fetch(FN_PUSH, { method, headers: { 'Content-Type': 'application/json', apikey: CFG.key, Authorization: 'Bearer ' + (sessao ? sessao.access_token : CFG.key) }, body: body ? JSON.stringify(body) : undefined });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.erro || 'Não deu para falar com o servidor de notificações.');
+    return j;
+  }
+  const ehIOS = () => /iPhone|iPad|iPod/.test(navigator.userAgent);
+  const instalado = () => window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+  const suportaPush = () => 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+  function b64ParaBytes(b64) {
+    const pad = '='.repeat((4 - (b64.length % 4)) % 4);
+    const raw = atob((b64 + pad).replace(/-/g, '+').replace(/_/g, '/'));
+    return Uint8Array.from(raw, (c) => c.charCodeAt(0));
+  }
+  async function estadoPush() {
+    if (!suportaPush()) return 'sem-suporte';
+    if (Notification.permission === 'denied') return 'bloqueado';
+    const reg = await navigator.serviceWorker.getRegistration();
+    const sub = reg && (await reg.pushManager.getSubscription());
+    if (!sub) return 'desligado';
+    const { data } = await sb.from('push_inscricoes').select('endpoint').eq('endpoint', sub.endpoint).eq('loja_id', S.loja.id);
+    return data && data.length ? 'ligado' : 'desligado';
+  }
+  async function ativarPush() {
+    if (!suportaPush()) throw new Error(ehIOS() && !instalado() ? 'No iPhone, primeiro adicione o Foresee à Tela de Início e abra por lá.' : 'Este navegador não recebe notificações.');
+    const perm = await Notification.requestPermission();
+    if (perm !== 'granted') throw new Error('Você não permitiu as notificações. Libere nos ajustes do celular.');
+    const reg = await navigator.serviceWorker.ready;
+    let sub = await reg.pushManager.getSubscription();
+    if (!sub) {
+      const { publicKey } = await chamarPush('GET');
+      sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64ParaBytes(publicKey) });
+    }
+    const j = sub.toJSON();
+    await run(sb.from('push_inscricoes').upsert({ endpoint: j.endpoint, loja_id: S.loja.id, user_id: S.user.id, p256dh: j.keys.p256dh, auth: j.keys.auth, aparelho: navigator.userAgent.slice(0, 150) }, { onConflict: 'endpoint,loja_id' }));
+  }
+  async function desativarPush() {
+    const reg = await navigator.serviceWorker.getRegistration();
+    const sub = reg && (await reg.pushManager.getSubscription());
+    if (sub) await run(sb.from('push_inscricoes').delete().eq('endpoint', sub.endpoint).eq('loja_id', S.loja.id));
+  }
+
   async function carregarVendedores(forcar) {
     if (S.vendedores && !forcar) return S.vendedores;
     S.vendedores = await run(sb.from('vendedores').select('id, nome, comissao_pct, ativo').eq('loja_id', S.loja.id).order('nome'));
@@ -1150,6 +1195,7 @@
             p_canal: st.canal,
             p_vendedor: st.vendedor
           }));
+          chamarPush('POST', { venda_id: r.id }).catch(() => {});
           S.carrinho = [];
           salvarCarrinho();
           S.produtos = null;
@@ -1988,6 +2034,10 @@
           <div class="lista">${S.membros.map((m) => `<div class="item" style="cursor:default"><div class="avatar ${m.loja_id === L.id ? '' : 'cinza'}">${esc(iniciais(m.lojas.nome))}</div>
             <div class="grow"><div class="tit">${esc(m.lojas.nome)}</div><div class="sub">${NOME_PAPEL[m.papel] || 'Equipe'}</div></div>${m.loja_id === L.id ? '<span class="badge ok">Atual</span>' : ''}</div>`).join('')}</div>
           <div class="grid" style="grid-template-columns:1fr 1fr;margin-top:10px"><button class="btn" type="button" id="aj-trocar">Trocar de loja</button><button class="btn" type="button" id="aj-nova">${ic.plus}Nova loja</button></div></div>
+        <div class="card"><h2>${ic.alert.replace('<svg', '<svg style="width:20px;height:20px"')} Notificação de venda</h2>
+          <p class="small muted">Toda venda lançada avisa no celular: <b style="color:var(--ink)">"Venda aprovada! Valor: R$ 39,99 – Cartão de crédito"</b>. Chega para o dono e os gerentes que ativarem neste aparelho.</p>
+          <p class="small" id="push-estado" style="margin:10px 0">Verificando…</p>
+          <div class="row wrap" id="push-botoes"></div></div>
         <div class="card"><h2>${ic.phone.replace('<svg', '<svg style="width:20px;height:20px"')} Instalar no celular</h2>
           <p class="small muted"><b style="color:var(--ink)">iPhone:</b> abra no Safari, toque em Compartilhar e depois em "Adicionar à Tela de Início".</p>
           <p class="small muted" style="margin-top:8px"><b style="color:var(--ink)">Android:</b> no Chrome, toque nos 3 pontinhos e em "Instalar app".</p>
@@ -2018,6 +2068,26 @@
     $('#aj-trocar').addEventListener('click', trocarLoja);
     $('#aj-nova').addEventListener('click', formCriarLoja);
     $('#aj-sair').addEventListener('click', sair);
+    const desenharPush = async () => {
+      const est = $('#push-estado'), bt = $('#push-botoes');
+      if (!est) return;
+      let e = 'sem-suporte';
+      try { e = await estadoPush(); } catch (err) { e = 'desligado'; }
+      const txt = {
+        ligado: '<span class="badge ok">Ativada neste aparelho</span>',
+        desligado: '<span class="badge">Desativada neste aparelho</span>',
+        bloqueado: '<span class="badge danger">Bloqueada</span> Libere as notificações do Foresee nos ajustes do celular.',
+        'sem-suporte': ehIOS() && !instalado() ? '<span class="badge warn">Instale primeiro</span> No iPhone, a notificação só funciona com o Foresee na Tela de Início (veja abaixo). Depois abra por lá e ative aqui.' : '<span class="badge warn">Indisponível</span> Este navegador não recebe notificações.'
+      };
+      est.innerHTML = txt[e];
+      bt.innerHTML = e === 'ligado' ? '<button class="btn" type="button" id="push-teste">Testar</button><button class="btn perigo" type="button" id="push-off">Desativar</button>'
+        : e === 'desligado' ? '<button class="btn prim" type="button" id="push-on">Ativar notificações</button>' : '';
+      const on = $('#push-on'), off = $('#push-off'), teste = $('#push-teste');
+      if (on) on.addEventListener('click', () => ocupado(on, async () => { try { await ativarPush(); toast('Notificações ativadas!'); } catch (err) { toast(msgErro(err), 'erro'); } desenharPush(); }));
+      if (off) off.addEventListener('click', () => ocupado(off, async () => { try { await desativarPush(); toast('Notificações desativadas.'); } catch (err) { toast(msgErro(err), 'erro'); } desenharPush(); }));
+      if (teste) teste.addEventListener('click', () => ocupado(teste, async () => { try { const r = await chamarPush('POST', { teste: true }); toast(r.enviados ? 'Teste enviado. Deve chegar em segundos.' : 'Nenhum aparelho recebeu. Desative e ative de novo.', r.enviados ? '' : 'erro'); } catch (err) { toast(msgErro(err), 'erro'); } }));
+    };
+    desenharPush();
     const inst = $('#instalar');
     if (inst) inst.addEventListener('click', async () => { if (!promptInstalar) return; promptInstalar.prompt(); promptInstalar = null; inst.classList.add('hidden'); });
     const novoCod = $('#novo-codigo');
