@@ -712,6 +712,30 @@ language sql stable security definer set search_path = public as $$
    group by v.cliente_id;
 $$;
 
+-- ---------- v1.4: notificações de venda (push) ---------------------
+-- Chaves do push: só o servidor (Edge Function) lê; ninguém pelo app.
+create table if not exists public.push_config (
+  id           integer primary key check (id = 1),
+  public_key   text not null,
+  private_key  text not null
+);
+-- Aparelhos que recebem notificação de venda
+create table if not exists public.push_inscricoes (
+  endpoint    text not null,
+  loja_id     uuid not null references public.lojas(id) on delete cascade,
+  user_id     uuid not null references auth.users(id) on delete cascade,
+  p256dh      text not null,
+  auth        text not null,
+  aparelho    text,
+  created_at  timestamptz not null default now(),
+  primary key (endpoint, loja_id)
+);
+alter table public.push_config     enable row level security;
+alter table public.push_inscricoes enable row level security;
+drop policy if exists push_proprias on public.push_inscricoes;
+create policy push_proprias on public.push_inscricoes for all to authenticated
+  using (user_id = auth.uid()) with check (user_id = auth.uid() and public.eh_membro(loja_id));
+
 -- ---------- Papel na equipe ----------------------------------------
 
 create or replace function public.definir_papel(p_loja uuid, p_user uuid, p_papel text)
