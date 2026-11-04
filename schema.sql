@@ -509,12 +509,16 @@ begin
     v_qtd := (v_item->>'quantidade')::integer;
     if v_qtd is null or v_qtd <= 0 then raise exception 'Quantidade inválida.'; end if;
 
-    select va.id, va.produto_id, va.tamanho, va.cor, p.nome, p.preco, p.custo
+    select va.id, va.produto_id, va.tamanho, va.cor, va.estoque, p.nome, p.preco, p.custo
       into v_var
       from variacoes va join produtos p on p.id = va.produto_id
       where va.id = nullif(v_item->>'variacao_id', '')::uuid and va.loja_id = p_loja
       for update of va;
     if not found then raise exception 'Peça não encontrada nesta loja.'; end if;
+    if v_var.estoque < v_qtd then
+      raise exception 'Só tem % peça(s) de % · % em estoque.', greatest(v_var.estoque, 0), v_var.nome,
+        v_var.tamanho || case when v_var.cor <> '' then ' · ' || v_var.cor else '' end;
+    end if;
 
     v_preco := round(coalesce((v_item->>'preco_unit')::numeric, v_var.preco), 2);
     if v_preco < 0 then raise exception 'Preço inválido.'; end if;
