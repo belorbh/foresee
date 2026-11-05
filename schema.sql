@@ -165,6 +165,10 @@ do $$ begin
   end if;
 end $$;
 
+-- v1.6: vendedor ligado à conta no app (vê as vendas no nome dele e a comissão)
+alter table public.vendedores add column if not exists user_id uuid references auth.users(id) on delete set null;
+create unique index if not exists vendedores_loja_user_idx on public.vendedores (loja_id, user_id) where user_id is not null;
+
 -- v1.2: despesas fixas que se repetem todo mês
 create table if not exists public.despesas_fixas (
   id          uuid primary key default gen_random_uuid(),
@@ -212,6 +216,11 @@ create index if not exists despesas_loja_data_idx on public.despesas (loja_id, d
 create or replace function public.eh_membro(p_loja uuid)
 returns boolean language sql stable security definer set search_path = public as $$
   select exists (select 1 from public.membros where loja_id = p_loja and user_id = auth.uid());
+$$;
+
+create or replace function public.meus_vendedores()
+returns setof uuid language sql stable security definer set search_path = public as $$
+  select id from public.vendedores where user_id = auth.uid();
 $$;
 
 create or replace function public.eh_gerente(p_loja uuid)
@@ -262,10 +271,12 @@ drop policy if exists vendas_ver      on public.vendas;
 drop policy if exists venda_itens_ver on public.venda_itens;
 -- vendedor só vê as próprias vendas; dono e gerente veem todas
 create policy vendas_ver      on public.vendas      for select to authenticated
-  using (public.eh_gerente(loja_id) or (vendedor_id = auth.uid() and public.eh_membro(loja_id)));
+  using (public.eh_gerente(loja_id) or (public.eh_membro(loja_id) and
+         (vendedor_id = auth.uid() or vendedor_cad_id in (select public.meus_vendedores()))));
 create policy venda_itens_ver on public.venda_itens for select to authenticated
   using (public.eh_gerente(loja_id) or exists (select 1 from public.vendas v
-          where v.id = venda_id and v.vendedor_id = auth.uid() and public.eh_membro(v.loja_id)));
+          where v.id = venda_id and public.eh_membro(v.loja_id)
+            and (v.vendedor_id = auth.uid() or v.vendedor_cad_id in (select public.meus_vendedores()))));
 
 -- Clientes: toda a equipe cadastra e edita
 drop policy if exists clientes_tudo on public.clientes;
@@ -485,6 +496,10 @@ begin
   if v_data < now() - interval '1 year' then raise exception 'A data da venda é muito antiga.'; end if;
   select nome into v_nome from membros where loja_id = p_loja and user_id = v_uid;
   if not found then raise exception 'Sem acesso a esta loja.'; end if;
+  if p_vendedor is null then
+    -- quem está logado e tem cadastro de vendedor: a venda já sai no nome dele (com comissão)
+    select id into p_vendedor from vendedores where loja_id = p_loja and user_id = v_uid and ativo;
+  end if;
   if p_vendedor is not null then
     select nome, comissao_pct into v_nome, v_pct from vendedores where id = p_vendedor and loja_id = p_loja;
     if not found then raise exception 'Vendedor não encontrado.'; end if;
