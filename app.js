@@ -656,7 +656,7 @@
 
   async function carregarVendedores(forcar) {
     if (S.vendedores && !forcar) return S.vendedores;
-    S.vendedores = await run(sb.from('vendedores').select('id, nome, comissao_pct, ativo').eq('loja_id', S.loja.id).order('nome'));
+    S.vendedores = await run(sb.from('vendedores').select('id, nome, comissao_pct, ativo, user_id').eq('loja_id', S.loja.id).order('nome'));
     return S.vendedores;
   }
 
@@ -1303,7 +1303,7 @@
       $('#cli-trocar', folha).addEventListener('click', () => escolherCliente((c) => { st.cliente = c; desenharCliente(); }));
     };
     desenharCliente();
-    carregarVendedores().then((vs) => {
+    (soVendedor() ? Promise.resolve([]) : carregarVendedores()).then((vs) => {
       const ativos = (vs || []).filter((x) => x.ativo);
       if (!ativos.length || !$('#pag-vendedores', folha)) return;
       const ultimo = LS.get('vendedor.' + S.loja.id, null);
@@ -1453,7 +1453,8 @@
       <div class="card kpi destaque"><div class="rotulo">Faturamento</div><div class="valor">${money(fat)}</div><div class="det">${plural(ok.length, 'venda', 'vendas')}</div></div>
       <div class="card kpi"><div class="rotulo">Ticket médio</div><div class="valor">${money(ok.length ? fat / ok.length : 0)}</div></div>
       <div class="card kpi"><div class="rotulo">Peças</div><div class="valor">${pecas}</div><div class="det">${ok.length ? n1(pecas / ok.length) + ' por venda' : '–'}</div></div>
-      <div class="card kpi"><div class="rotulo">Canceladas</div><div class="valor">${canceladas}</div></div></div>`;
+      ${soVendedor() ? `<div class="card kpi destaque"><div class="rotulo">Sua comissão</div><div class="valor">${money(ok.reduce((t, x) => t + Number(x.comissao || 0), 0))}</div><div class="det">${faixas[periodo][2].toLowerCase()}</div></div>`
+        : `<div class="card kpi"><div class="rotulo">Canceladas</div><div class="valor">${canceladas}</div></div>`}</div>`;
     if (!vendas.length) {
       html += vazioHTML(ic.receipt, 'Nenhuma venda nesse período', 'As vendas registradas no caixa aparecem aqui.', '#/vender', 'Fazer uma venda');
     } else {
@@ -1468,7 +1469,7 @@
             <div class="avatar ${x.status === 'cancelada' ? 'cinza' : ''}" style="font-size:12px">nº${x.numero}</div>
             <div class="grow" style="min-width:0"><div class="tit ellipsis">${x.clientes ? esc(x.clientes.nome) : '<span class="muted">Sem cliente cadastrado</span>'}</div>
               <div class="sub">${fmtHora(x.data)} · ${esc(x.canal || 'Loja física')} · ${esc(x.forma_pagamento)}${x.parcelas > 1 ? ` ${x.parcelas}x` : ''} · ${plural(x.pecas, 'peça', 'peças')}${x.vendedor_nome ? ' · ' + esc(x.vendedor_nome) : ''}</div></div>
-            <div class="right">${x.status === 'cancelada' ? '<span class="badge danger">Cancelada</span>' : `<b class="num">${money(x.total)}</b>`}${Number(x.desconto) > 0 && x.status !== 'cancelada' ? `<div class="tiny faint">−${brl(x.desconto)}</div>` : ''}</div></button>`).join('');
+            <div class="right">${x.status === 'cancelada' ? '<span class="badge danger">Cancelada</span>' : `<b class="num">${money(x.total)}</b>`}${Number(x.desconto) > 0 && x.status !== 'cancelada' ? `<div class="tiny faint">−${brl(x.desconto)}</div>` : ''}${soVendedor() && Number(x.comissao) > 0 && x.status !== 'cancelada' ? `<div class="tiny up">comissão ${brl(x.comissao)}</div>` : ''}</div></button>`).join('');
         html += '</div>';
       });
       html += '</div>';
@@ -2267,7 +2268,7 @@
         if (!box) return;
         box.innerHTML = vs.length ? `<div class="lista">${vs.map((x) => `<button class="item" type="button" data-ev="${x.id}">
             <div class="avatar ${x.ativo ? '' : 'cinza'}">${esc(iniciais(x.nome))}</div>
-            <div class="grow"><div class="tit">${esc(x.nome)} ${x.ativo ? '' : '<span class="badge">inativo</span>'}</div><div class="sub">Comissão de ${n1(x.comissao_pct)}% sobre a venda</div></div>
+            <div class="grow"><div class="tit">${esc(x.nome)} ${x.ativo ? '' : '<span class="badge">inativo</span>'}</div><div class="sub">Comissão de ${n1(x.comissao_pct)}% sobre a venda${x.user_id ? " · ligado à conta" : " · <span class=\"down\">sem conta no app</span>"}</div></div>
             ${ic.edit.replace('<svg', '<svg style="width:18px;height:18px;color:var(--ink-3)"')}</button>`).join('')}</div>`
           : '<p class="small faint">Nenhum vendedor cadastrado.</p>';
         $$('[data-ev]', box).forEach((b) => b.addEventListener('click', () => formVendedor(vs.find((x) => x.id === b.dataset.ev), () => desenharVend(true))));
@@ -2307,12 +2308,19 @@
         <label class="campo"><span>Nome</span><input class="input" name="nome" value="${esc(x ? x.nome : '')}" placeholder="Ex.: Betinho" autofocus></label>
         <label class="campo"><span>Comissão</span><div class="row"><input class="input" name="pct" inputmode="decimal" value="${x ? String(x.comissao_pct).replace('.', ',') : ''}" placeholder="Ex.: 3" style="max-width:120px"><b>% sobre cada venda</b></div>
           <span class="ajuda">Calculada sobre o valor final da venda (depois do desconto).</span></label>
+        <label class="campo"><span>Conta no app</span><select class="input" name="conta"><option value="">Carregando…</option></select>
+          <span class="ajuda">Ligue à conta da pessoa: ela passa a ver todas as vendas no nome dela (inclusive as que você lançar) e a comissão.</span></label>
         ${x ? `<label class="check-row"><input type="checkbox" id="vend-ativo" ${x.ativo ? 'checked' : ''}><span><b>Ativo</b><small>Desmarque se a pessoa saiu. As vendas antigas continuam no nome dela.</small></span></label>` : ''}
         <p class="erro-msg hidden" id="vend-erro"></p>
         <button class="btn prim bloco grande" type="submit">${x ? 'Salvar' : 'Adicionar vendedor'}</button>
       </form>`, {
       aoAbrir: (f, fechar) => {
         const form = $('#f-vend', f);
+        sb.from('membros').select('user_id, nome, papel').eq('loja_id', S.loja.id).order('nome').then(({ data }) => {
+          const usados = (S.vendedores || []).filter((v) => v.user_id && (!x || v.id !== x.id)).map((v) => v.user_id);
+          form.conta.innerHTML = '<option value="">Sem conta (só cadastro)</option>' + (data || []).filter((m) => !usados.includes(m.user_id))
+            .map((m) => `<option value="${m.user_id}" ${x && x.user_id === m.user_id ? 'selected' : ''}>${esc(m.nome)} · ${NOME_PAPEL[m.papel] || ''}</option>`).join('');
+        });
         form.addEventListener('submit', async (e) => {
           e.preventDefault();
           const erro = $('#vend-erro', f);
@@ -2322,6 +2330,7 @@
           if (pctV < 0 || pctV > 100) { erro.textContent = 'A comissão vai de 0 a 100%.'; erro.classList.remove('hidden'); return; }
           const dados = { nome, comissao_pct: pctV };
           if (x) dados.ativo = $('#vend-ativo', f).checked;
+          if (form.conta.options.length > 1 || form.conta.value) dados.user_id = form.conta.value || null;
           await ocupado(form.querySelector('button[type=submit]'), async () => {
             try {
               if (x) await run(sb.from('vendedores').update(dados).eq('id', x.id));

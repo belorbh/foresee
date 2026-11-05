@@ -2,8 +2,8 @@
 // Arquivos do app: tenta a rede primeiro (sempre a versão nova) e usa a cópia guardada se cair a internet.
 // Dados (Supabase) nunca são guardados aqui.
 // Só mexe nos caches que começam com "foresee-" (o site pode ter outros apps no mesmo endereço).
-const CACHE = 'foresee-v1.5.2';
-const ARQUIVOS = ['./', './index.html', './styles.css?v=1.5.2', './app.js?v=1.5.2', './config.js?v=1.5.2', './manifest.webmanifest', './icon.svg', './icon-192.png'];
+const CACHE = 'foresee-v1.6.0';
+const ARQUIVOS = ['./', './index.html', './styles.css?v=1.6.0', './app.js?v=1.6.0', './config.js?v=1.6.0', './manifest.webmanifest', './icon.svg', './icon-192.png'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(ARQUIVOS)).then(() => self.skipWaiting()));
