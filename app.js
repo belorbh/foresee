@@ -813,10 +813,10 @@
         </div></div>`;
     }
     v.innerHTML = html;
-    v.addEventListener('click', (e) => {
+    v.onclick = (e) => {
       const b = e.target.closest('[data-venda]');
       if (b) detalheVenda(listaHoje.find((x) => x.id === b.dataset.venda));
-    });
+    };
   };
 
   TELAS.inicio = async function (v, _, token) {
@@ -1494,6 +1494,79 @@
     });
   };
 
+  function formEditarVenda(venda, fecharDetalhe) {
+    const hojeIso = isoData(new Date());
+    const dataOrig = isoData(new Date(venda.data));
+    const st = { canal: venda.canal || 'Loja física', forma: venda.forma_pagamento, parcelas: venda.parcelas || 1, cliente: venda.cliente_id ? { id: venda.cliente_id, nome: venda.clientes ? venda.clientes.nome : 'Cliente' } : null,
+      desc: Number(venda.desconto) || 0, vendedor: venda.vendedor_cad_id || null, mudouVend: false, data: dataOrig };
+    const sub = Number(venda.subtotal);
+    const { folha, fechar } = abrirFolha(`${cabFolha(`Editar venda nº ${venda.numero}`, 'As peças não mudam aqui. Pra trocar peça, cancele a venda e lance de novo.')}
+      <div class="form">
+        <div class="campo"><span>Onde foi a venda</span><div class="pagamentos">${CANAIS.map(([c, i]) => `<button class="pag" type="button" data-canal="${c}">${i}${c}</button>`).join('')}</div></div>
+        <label class="campo"><span>Data da venda</span><input class="input" type="date" id="ed-data" value="${dataOrig}" max="${hojeIso}" min="${isoData(addDias(new Date(), -365))}"></label>
+        <div class="campo hidden" id="ed-campo-vend"><span>Vendedor</span><div class="chips" id="ed-vendedores"></div></div>
+        <div class="campo"><span>Cliente</span><div id="ed-cliente"></div></div>
+        <div class="campo"><span>Desconto (R$)</span><div class="prefix"><b>R$</b><input class="input" id="ed-desc" inputmode="decimal" value="${st.desc ? String(st.desc).replace('.', ',') : ''}" placeholder="0"></div><span class="ajuda" id="ed-info"></span></div>
+        <div class="campo"><span>Forma de pagamento</span><div class="pagamentos">${FORMAS.map(([f, i]) => `<button class="pag" type="button" data-forma="${f}">${i}${f}</button>`).join('')}</div></div>
+        <div class="campo hidden" id="ed-campo-parc"><span>Parcelas</span><select class="input" id="ed-parc">${Array.from({ length: 12 }, (_, i) => `<option value="${i + 1}">${i + 1}x</option>`).join('')}</select></div>
+        <label class="campo"><span>Observação</span><input class="input" id="ed-obs" maxlength="200" value="${esc(venda.observacao || '')}" placeholder="Ex.: troca até sábado"></label>
+        <div class="card flat" style="background:var(--surface-2);border:0"><div class="total-linha grande"><span>Total</span><span id="ed-total">${money(sub)}</span></div></div>
+        <p class="erro-msg hidden" id="ed-erro"></p>
+        <button class="btn prim bloco grande" type="button" id="ed-salvar">Salvar alterações</button>
+      </div>`);
+    const total = () => Math.max(0, sub - Math.min(sub, st.desc));
+    const desenhar = () => {
+      $$('[data-canal]', folha).forEach((b) => b.classList.toggle('ativo', b.dataset.canal === st.canal));
+      $$('[data-forma]', folha).forEach((b) => b.classList.toggle('ativo', b.dataset.forma === st.forma));
+      $('#ed-campo-parc', folha).classList.toggle('hidden', st.forma !== 'Crédito');
+      $('#ed-parc', folha).value = String(st.parcelas);
+      $('#ed-total', folha).innerHTML = money(total());
+      $('#ed-info', folha).textContent = st.desc > sub ? 'O desconto não pode ser maior que a venda.' : '';
+      $('#ed-cliente', folha).innerHTML = `<button class="btn bloco" type="button" id="ed-cli">${ic.users}${st.cliente ? esc(st.cliente.nome) + ' (trocar)' : 'Sem cliente cadastrado (escolher)'}</button>${st.cliente ? '<button class="link-btn small" type="button" id="ed-cli-x" style="margin-top:6px">Tirar cliente</button>' : ''}`;
+      $('#ed-cli', folha).addEventListener('click', () => escolherCliente((c) => { st.cliente = c; desenhar(); }));
+      const x = $('#ed-cli-x', folha); if (x) x.addEventListener('click', () => { st.cliente = null; desenhar(); });
+    };
+    $$('[data-canal]', folha).forEach((b) => b.addEventListener('click', () => { st.canal = b.dataset.canal; desenhar(); }));
+    $$('[data-forma]', folha).forEach((b) => b.addEventListener('click', () => { st.forma = b.dataset.forma; desenhar(); }));
+    $('#ed-parc', folha).addEventListener('change', (e) => { st.parcelas = Number(e.target.value) || 1; });
+    $('#ed-data', folha).addEventListener('change', (e) => { const v = e.target.value; st.data = v && v <= hojeIso ? v : dataOrig; if (v !== st.data) e.target.value = st.data; });
+    $('#ed-desc', folha).addEventListener('input', (e) => { st.desc = parseMoney(e.target.value); desenhar(); });
+    desenhar();
+    carregarVendedores().then((vs) => {
+      const ativos = vs.filter((x) => x.ativo || x.id === st.vendedor);
+      if (!ativos.length || !$('#ed-vendedores', folha)) return;
+      $('#ed-campo-vend', folha).classList.remove('hidden');
+      const pintar = () => {
+        $('#ed-vendedores', folha).innerHTML = [{ id: null, nome: 'Sem vendedor' }, ...ativos].map((x) => `<button class="chip ${x.id === st.vendedor ? 'ativo' : ''}" type="button" data-vend="${x.id || ''}">${esc(x.nome)}${x.comissao_pct ? ` <span class="x">${n1(x.comissao_pct)}%</span>` : ''}</button>`).join('');
+      };
+      pintar();
+      $('#ed-vendedores', folha).addEventListener('click', (e) => {
+        const b = e.target.closest('[data-vend]'); if (!b) return;
+        st.vendedor = b.dataset.vend || null; st.mudouVend = true; pintar();
+      });
+    }).catch(() => {});
+    $('#ed-salvar', folha).addEventListener('click', async (e) => {
+      const erro = $('#ed-erro', folha);
+      if (st.desc > sub) { erro.textContent = 'O desconto não pode ser maior que a venda.'; erro.classList.remove('hidden'); return; }
+      await ocupado(e.currentTarget, async () => {
+        try {
+          await run(sb.rpc('editar_venda', {
+            p_venda: venda.id,
+            p_data: st.data === dataOrig ? null : (() => { const d = dataLocal(st.data); d.setHours(12, 0, 0, 0); return d.toISOString(); })(),
+            p_canal: st.canal, p_forma: st.forma, p_parcelas: st.forma === 'Crédito' ? st.parcelas : 1,
+            p_cliente: st.cliente ? st.cliente.id : null, p_desconto: Math.min(st.desc, sub),
+            p_obs: ($('#ed-obs', folha).value || '').trim() || null,
+            p_mudar_vendedor: st.mudouVend, p_vendedor: st.vendedor
+          }));
+          S.clientes = null; S.resumoClientes = null;
+          fechar(); fecharDetalhe();
+          toast('Venda atualizada.');
+          rotear();
+        } catch (err) { erro.textContent = msgErro(err); erro.classList.remove('hidden'); }
+      });
+    });
+  }
+
   async function detalheVenda(venda) {
     const { folha, fechar } = abrirFolha(`${cabFolha(`Venda nº ${venda.numero}`, `${cap(fmtDiaLongo(new Date(venda.data)))} às ${fmtHora(venda.data)}${venda.vendedor_nome ? ' · ' + esc(venda.vendedor_nome) : ''}`)}<div id="det-venda">${carregandoHTML()}</div>`);
     let itens;
@@ -1516,11 +1589,14 @@
       <div class="stack" style="margin-top:14px">
         ${link ? `<a class="btn bloco" href="${link}" target="_blank" rel="noopener">${ic.chat}Mandar comprovante no WhatsApp</a>` : ''}
         ${venda.cliente_id && gerente() ? `<a class="btn bloco" href="#/cliente/${venda.cliente_id}" id="ver-cli">${ic.users}Ver cliente</a>` : ''}
+        ${gerente() && venda.status === 'concluida' ? `<button class="btn bloco" type="button" id="editar-venda">${ic.edit || ic.dots}Editar venda</button>` : ''}
         ${dono() && venda.status === 'concluida' ? `<button class="btn bloco" type="button" id="trocar-vend">${ic.users}${venda.vendedor_cad_id ? `Vendedor: ${esc(venda.vendedor_nome)} · comissão ${brl(venda.comissao)} (trocar)` : 'Definir vendedor (comissão)'}</button>` : ''}
         ${dono() && venda.status === 'concluida' ? `<button class="btn perigo bloco" type="button" id="cancelar-venda">${ic.x}Cancelar venda</button>` : ''}
       </div>`;
     const verCli = $('#ver-cli', box);
     if (verCli) verCli.addEventListener('click', fechar);
+    const ev = $('#editar-venda', box);
+    if (ev) ev.addEventListener('click', () => formEditarVenda(venda, fechar));
     const tv = $('#trocar-vend', box);
     if (tv) tv.addEventListener('click', async () => {
       let vs;
