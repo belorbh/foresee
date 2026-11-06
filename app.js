@@ -723,10 +723,12 @@
     v.innerHTML = `<div class="card hoje-hero"><div class="esqueleto" style="height:120px"></div></div>
       <div class="grid k4" style="margin-top:12px">${'<div class="card kpi"><div class="esqueleto" style="height:58px"></div></div>'.repeat(4)}</div>`;
     const ini = addDias(hoje, -13);
-    const [vendas, novos] = await Promise.all([
+    const [vendas, novos, listaHoje] = await Promise.all([
       run(sb.from('vendas').select('id, data, total, pecas, cliente_id, forma_pagamento, parcelas, vendedor_nome, canal, status')
         .eq('loja_id', S.loja.id).eq('status', 'concluida').gte('data', ini.toISOString()).order('data')),
-      run(sb.from('clientes').select('origem, created_at').eq('loja_id', S.loja.id).gte('created_at', hoje.toISOString()))
+      run(sb.from('clientes').select('origem, created_at').eq('loja_id', S.loja.id).gte('created_at', hoje.toISOString())),
+      run(sb.from('vendas').select('id, numero, data, canal, cliente_id, vendedor_nome, vendedor_cad_id, comissao, subtotal, desconto, total, pecas, forma_pagamento, parcelas, status, observacao, clientes(nome, telefone)')
+        .eq('loja_id', S.loja.id).gte('data', hoje.toISOString()).lt('data', addDias(hoje, 1).toISOString()).order('data', { ascending: false }))
     ]);
     if (!vivo(token)) return;
     const porDia = {};
@@ -770,6 +772,13 @@
       <div class="card kpi"><div class="rotulo">Peças por cliente</div><div class="valor">${pa ? n1(pa) : '–'}</div><div class="det">${plural(h.pecas, 'peça', 'peças')} hoje</div></div>
       <div class="card kpi"><div class="rotulo">Cadastros</div><div class="valor">${h.vendas ? `${h.comCad}<small class="faint" style="font-size:15px"> de ${h.vendas}</small>` : '–'}</div><div class="det">${h.vendas ? `<span class="${h.comCad / h.vendas >= 0.9 ? 'up' : 'down'}">${pct(h.comCad / h.vendas)}</span> das vendas com cadastro` : 'sem vendas ainda'}</div></div>
     </div>`;
+    if (listaHoje.length) {
+      html += `<div class="card" style="margin-top:12px;padding-bottom:4px"><h2>Vendas de hoje <span class="acao faint">toque para ver o detalhe</span></h2><div class="lista">${listaHoje.map((x) => `<button class="item" type="button" data-venda="${x.id}">
+        <div class="avatar ${x.status === 'cancelada' ? 'cinza' : ''}" style="font-size:12px">nº${x.numero}</div>
+        <div class="grow" style="min-width:0"><div class="tit ellipsis">${x.clientes ? esc(x.clientes.nome) : '<span class="muted">Sem cliente cadastrado</span>'}</div>
+          <div class="sub">${fmtHora(x.data)} · ${esc(x.canal || 'Loja física')} · ${esc(x.forma_pagamento)}${x.parcelas > 1 ? ` ${x.parcelas}x` : ''} · ${plural(x.pecas, 'peça', 'peças')}${x.vendedor_nome ? ' · ' + esc(x.vendedor_nome) : ''}</div></div>
+        <div class="right">${x.status === 'cancelada' ? '<span class="badge danger">Cancelada</span>' : `<b class="num">${money(x.total)}</b>`}</div></button>`).join('')}</div></div>`;
+    }
     html += '<div class="grid c2" style="margin-top:12px">';
     if (novos.length) {
       const oc = {};
@@ -804,6 +813,10 @@
         </div></div>`;
     }
     v.innerHTML = html;
+    v.addEventListener('click', (e) => {
+      const b = e.target.closest('[data-venda]');
+      if (b) detalheVenda(listaHoje.find((x) => x.id === b.dataset.venda));
+    });
   };
 
   TELAS.inicio = async function (v, _, token) {
