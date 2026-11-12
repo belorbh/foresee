@@ -379,7 +379,7 @@
     app.innerHTML = carregandoHTML(true);
     try {
       const membros = await run(sb.from('membros')
-        .select('loja_id, papel, nome, lojas(id, nome, cidade, telefone, instagram, meta_mensal, codigo_convite)')
+        .select('loja_id, papel, nome, lojas(id, nome, cidade, telefone, instagram, meta_mensal, codigo_convite, contador_modo)')
         .eq('user_id', S.user.id));
       S.membros = (membros || []).filter((m) => m.lojas);
       if (!S.membros.length) return telaBoasVindas();
@@ -704,7 +704,10 @@
   const tkFmt = (v) => (S.ocultar ? '' : v >= 1000 ? (v / 1000).toLocaleString('pt-BR', { maximumFractionDigits: 1 }) + 'k' : Math.round(v).toLocaleString('pt-BR'));
   function barrasBelor(itens, o = {}) {
     const W = 340, H = o.h || 168, pl = 30, pr = 6, pt = 14, pb = 22, iw = W - pl - pr, ih = H - pt - pb;
-    const E = escala(Math.max(o.meta || 0, ...itens.map((it) => it.v || 0)) * 1.06), mx = E.max;
+    const topo = Math.max(o.meta || 0, ...itens.map((it) => it.v || 0)) * 1.06;
+    let E = escala(topo);
+    if (o.inteiro && E.step < 1) { const n = Math.max(1, Math.ceil(topo)); E = { step: 1, n, max: n }; }
+    const mx = E.max;
     const step = iw / Math.max(1, itens.length), bw = Math.max(2, Math.min(18, step - 2));
     const Y = (v) => pt + ih - (v / mx) * ih;
     let sv = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(o.aria || 'gráfico')}">`;
@@ -718,17 +721,47 @@
     return `<div class="chart-b">${sv}</svg></div>`;
   }
 
+  // Movimento na porta: passagens que a câmera detectou hoje, por hora, e a conversão da loja física.
+  function cardMovimentoPorta(passagens, vendasHoje, hoje) {
+    const idaVolta = (S.loja.contador_modo || 'ida_volta') === 'ida_volta';
+    const pessoas = Math.round(passagens.length * (idaVolta ? 0.5 : 1));
+    const vendLoja = vendasHoje.filter((x) => (x.canal || 'Loja física') === 'Loja física').length;
+    const incompleta = vendLoja > pessoas;   // mais compras que entradas: o contador perdeu gente (ou foi ligado no meio do dia)
+    const conv = pessoas && !incompleta ? vendLoja / pessoas : 0;
+    const porHora = {};
+    passagens.forEach((p) => { const h = new Date(p.momento).getHours(); porHora[h] = (porHora[h] || 0) + 1; });
+    const hs = Object.keys(porHora).map(Number);
+    const h0 = Math.min(8, ...hs), h1 = Math.max(19, ...hs);
+    const horas = Array.from({ length: h1 - h0 + 1 }, (_, i) => h0 + i);
+    const agoraH = new Date().getHours();
+    const itens = horas.map((h) => {
+      const v = porHora[h] || 0;
+      return { v, tick: h % 2 === 0 ? h + 'h' : '', cls: h === agoraH ? 'today' : '', t: `${h}h às ${h + 1}h: ${v} ${v === 1 ? 'passagem' : 'passagens'} na porta` };
+    });
+    return `<div class="card" style="margin-top:12px" id="card-porta"><h2>Movimento na porta <span class="acao faint">câmera · estimativa</span></h2>
+      <div class="grid" style="grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-bottom:10px">
+        <div><div class="tiny faint">Entraram</div><div class="num" style="font-size:22px;font-weight:700">${pessoas}</div><div class="tiny faint">${pessoas === 1 ? 'pessoa' : 'pessoas'}</div></div>
+        <div><div class="tiny faint">Compraram</div><div class="num" style="font-size:22px;font-weight:700">${vendLoja}</div><div class="tiny faint">na loja física</div></div>
+        <div><div class="tiny faint">Conversão</div><div class="num" style="font-size:22px;font-weight:700">${pessoas && !incompleta ? pct(conv) : '–'}</div><div class="tiny faint">${incompleta && pessoas ? 'contagem incompleta' : 'de quem entrou'}</div></div>
+      </div>
+      ${passagens.length ? `<div class="tiny faint" style="margin-bottom:2px">Passagens na porta por hora</div>${barrasBelor(itens, { h: 120, inteiro: true, aria: 'Passagens na porta por hora' })}` : '<p class="small muted">Nenhuma passagem na porta hoje ainda.</p>'}
+      <p class="tiny faint" style="margin-top:6px">${idaVolta ? 'A câmera vê quem entra e quem sai, então o Foresee divide as passagens por 2.' : 'A câmera conta só quem entra.'} Funcionário passando também conta.</p></div>`;
+  }
+
   TELAS.hoje = async function (v, _, token) {
     const agora = new Date(), hoje = inicioDia(agora);
     v.innerHTML = `<div class="card hoje-hero"><div class="esqueleto" style="height:120px"></div></div>
       <div class="grid k4" style="margin-top:12px">${'<div class="card kpi"><div class="esqueleto" style="height:58px"></div></div>'.repeat(4)}</div>`;
     const ini = addDias(hoje, -13);
-    const [vendas, novos, listaHoje] = await Promise.all([
+    const [vendas, novos, listaHoje, ultimaPassagem, passagensHoje, modoAtual] = await Promise.all([
       run(sb.from('vendas').select('id, data, total, pecas, cliente_id, forma_pagamento, parcelas, vendedor_nome, canal, status')
         .eq('loja_id', S.loja.id).eq('status', 'concluida').gte('data', ini.toISOString()).order('data')),
       run(sb.from('clientes').select('origem, created_at').eq('loja_id', S.loja.id).gte('created_at', hoje.toISOString())),
       run(sb.from('vendas').select('id, numero, data, canal, cliente_id, vendedor_nome, vendedor_cad_id, comissao, subtotal, desconto, total, pecas, forma_pagamento, parcelas, status, observacao, clientes(nome, telefone)')
-        .eq('loja_id', S.loja.id).gte('data', hoje.toISOString()).lt('data', addDias(hoje, 1).toISOString()).order('data', { ascending: false }))
+        .eq('loja_id', S.loja.id).gte('data', hoje.toISOString()).lt('data', addDias(hoje, 1).toISOString()).order('data', { ascending: false })),
+      gerente() ? run(sb.from('entradas_loja').select('momento').eq('loja_id', S.loja.id).gte('momento', addDias(hoje, -30).toISOString()).order('momento', { ascending: false }).limit(1)) : Promise.resolve([]),
+      gerente() ? run(sb.from('entradas_loja').select('momento').eq('loja_id', S.loja.id).gte('momento', hoje.toISOString()).lt('momento', addDias(hoje, 1).toISOString())) : Promise.resolve([]),
+      gerente() ? run(sb.from('lojas').select('contador_modo').eq('id', S.loja.id).maybeSingle()).catch(() => null) : Promise.resolve(null)
     ]);
     if (!vivo(token)) return;
     const porDia = {};
@@ -772,6 +805,8 @@
       <div class="card kpi"><div class="rotulo">Peças por cliente</div><div class="valor">${pa ? n1(pa) : '–'}</div><div class="det">${plural(h.pecas, 'peça', 'peças')} hoje</div></div>
       <div class="card kpi"><div class="rotulo">Cadastros</div><div class="valor">${h.vendas ? `${h.comCad}<small class="faint" style="font-size:15px"> de ${h.vendas}</small>` : '–'}</div><div class="det">${h.vendas ? `<span class="${h.comCad / h.vendas >= 0.9 ? 'up' : 'down'}">${pct(h.comCad / h.vendas)}</span> das vendas com cadastro` : 'sem vendas ainda'}</div></div>
     </div>`;
+    if (modoAtual && modoAtual.contador_modo) S.loja.contador_modo = modoAtual.contador_modo;
+    if (ultimaPassagem.length) html += cardMovimentoPorta(passagensHoje, vHoje, hoje);
     if (listaHoje.length) {
       html += `<div class="card" style="margin-top:12px;padding-bottom:4px"><h2>Vendas de hoje <span class="acao faint">toque para ver o detalhe</span></h2><div class="lista">${listaHoje.map((x) => `<button class="item" type="button" data-venda="${x.id}">
         <div class="avatar ${x.status === 'cancelada' ? 'cinza' : ''}" style="font-size:12px">nº${x.numero}</div>
@@ -2236,6 +2271,73 @@
   // ------------------------------------------------------------------
   // LOJA E EQUIPE
   // ------------------------------------------------------------------
+  // ---------- Robô do contador (Google Apps Script no Gmail da câmera) ----------
+  const ASSUNTO_CAMERA = 'ForeseeEntrada';
+  function codigoRobo(token) {
+    return [
+      '// Robô contador do Foresee · ' + S.loja.nome.replace(/[\r\n]/g, ' '),
+      '// Conta os e-mails que a câmera manda quando vê uma pessoa na porta e envia só os horários para o Foresee.',
+      '// Roda sozinho na nuvem do Google a cada 5 minutos. Nenhuma imagem é enviada ao Foresee.',
+      '// Para ligar: escolha a função "instalar" no menu de cima e clique em Executar (só uma vez).',
+      '',
+      "var FORESEE_URL = '" + CFG.url + "';",
+      "var FORESEE_CHAVE = '" + CFG.key + "';",
+      "var CODIGO_LOJA = '" + token + "';   // código secreto da loja: não compartilhe",
+      "var ASSUNTO = '" + ASSUNTO_CAMERA + "';",
+      '',
+      'function contarEntradas() {',
+      "  var conversas = GmailApp.search('in:anywhere subject:' + ASSUNTO + ' newer_than:13d', 0, 100);   // inclui o spam",
+      '  var msgs = [];',
+      '  conversas.forEach(function (c) { c.getMessages().forEach(function (m) { if (!m.isInTrash()) msgs.push(m); }); });',
+      '  if (!msgs.length) return;',
+      '  var lote = msgs.slice(0, 500);',
+      "  var resp = UrlFetchApp.fetch(FORESEE_URL + '/rest/v1/rpc/registrar_entradas', {",
+      "    method: 'post', contentType: 'application/json', muteHttpExceptions: true,",
+      '    headers: { apikey: FORESEE_CHAVE },',
+      '    payload: JSON.stringify({ p_token: CODIGO_LOJA, p_momentos: lote.map(function (m) { return m.getDate().toISOString(); }) })',
+      '  });',
+      "  if (resp.getResponseCode() !== 200) { console.log('O Foresee recusou: ' + resp.getContentText()); return; }",
+      '  lote.forEach(function (m) { m.moveToTrash(); });',
+      "  console.log(lote.length + ' passagem(ns) enviada(s) ao Foresee.');",
+      '}',
+      '',
+      'function instalar() {',
+      '  ScriptApp.getProjectTriggers().forEach(function (t) { ScriptApp.deleteTrigger(t); });',
+      "  ScriptApp.newTrigger('contarEntradas').timeBased().everyMinutes(5).create();",
+      '  contarEntradas();',
+      "  console.log('Pronto! O robô vai rodar sozinho a cada 5 minutos.');",
+      '}',
+      ''
+    ].join('\n');
+  }
+
+  async function copiarTexto(txt) {
+    try { await navigator.clipboard.writeText(txt); return true; } catch (e) { return false; }
+  }
+
+  function folhaRobo(token) {
+    const codigo = codigoRobo(token);
+    abrirFolha(`${cabFolha('Ligar o robô do contador', 'Faça isso uma vez, no Gmail que a câmera usa para mandar os avisos.')}
+      <ol class="small" style="padding-left:18px;display:grid;gap:8px;margin-bottom:12px">
+        <li>De preferência no computador, entre no <b>Gmail da câmera</b> e abra <b>script.google.com</b>. Clique em <b>Novo projeto</b>.</li>
+        <li>Apague o que estiver escrito, toque em <b>Copiar código</b> aqui embaixo e cole lá.</li>
+        <li>Salve, escolha a função <b>instalar</b> no menu de cima e clique em <b>Executar</b>. Quando o Google pedir, permita o acesso.</li>
+      </ol>
+      <p class="small muted" style="margin-bottom:10px">Na câmera, o assunto do e-mail de alarme tem que ser <b style="color:var(--ink)">${ASSUNTO_CAMERA}</b>. O configurador da câmera já deixa assim.</p>
+      <textarea class="input" id="robo-codigo" readonly rows="6" style="font-family:ui-monospace,monospace;font-size:11px;white-space:pre;overflow:auto">${esc(codigo)}</textarea>
+      <button class="btn prim bloco" type="button" id="robo-copiar" style="margin-top:10px">Copiar código</button>
+      <p class="tiny faint" style="margin-top:8px">O código tem a chave secreta da loja. Não mande para ninguém.</p>`, {
+      aoAbrir: (f) => {
+        $('#robo-copiar', f).addEventListener('click', async () => {
+          const ok = await copiarTexto(codigo);
+          if (ok) { toast('Código copiado. Agora cole no Google.'); return; }
+          const ta = $('#robo-codigo', f); ta.focus(); ta.select();
+          toast('Selecionei o código: toque e escolha Copiar.');
+        });
+      }
+    });
+  }
+
   TELAS.ajustes = async function (v, _, token) {
     const L = S.loja;
     if (soVendedor()) {
@@ -2278,6 +2380,11 @@
         ${dono() ? `<div class="card"><h2>${ic.tag.replace('<svg', '<svg style="width:20px;height:20px"')} Vendedores e comissão <button class="link-btn acao" type="button" id="novo-vend">+ Adicionar</button></h2>
           <p class="small muted" style="margin-bottom:8px">Escolha o vendedor na hora da venda e a comissão é calculada sozinha. Não precisa ter conta no app.</p>
           <div id="lista-vend">${carregandoHTML()}</div></div>` : ''}
+        ${dono() ? `<div class="card"><h2>${ic.eye.replace('<svg', '<svg style="width:20px;height:20px"')} Contador de pessoas (câmera)</h2>
+          <p class="small muted" style="margin-bottom:10px">A câmera da porta avisa cada pessoa que passa, e a tela Hoje mostra quantas entraram e a conversão. Só o horário é guardado, nenhuma imagem.</p>
+          <div id="contador-estado">${carregandoHTML()}</div>
+          <label class="campo" style="margin-top:12px"><span>O que a câmera vê</span><select class="input" id="contador-modo">
+            <option value="ida_volta">Quem entra e quem sai (divide por 2)</option><option value="so_entrada">Só quem entra</option></select></label></div>` : ''}
         <div class="card"><h2>${ic.store.replace('<svg', '<svg style="width:20px;height:20px"')} Suas lojas</h2>
           <div class="lista">${S.membros.map((m) => `<div class="item" style="cursor:default"><div class="avatar ${m.loja_id === L.id ? '' : 'cinza'}">${esc(iniciais(m.lojas.nome))}</div>
             <div class="grow"><div class="tit">${esc(m.lojas.nome)}</div><div class="sub">${NOME_PAPEL[m.papel] || 'Equipe'}</div></div>${m.loja_id === L.id ? '<span class="badge ok">Atual</span>' : ''}</div>`).join('')}</div>
@@ -2362,6 +2469,36 @@
           : '<p class="small faint">Nenhum vendedor cadastrado.</p>';
         $$('[data-ev]', box).forEach((b) => b.addEventListener('click', () => formVendedor(vs.find((x) => x.id === b.dataset.ev), () => desenharVend(true))));
       };
+      const modoSel = $('#contador-modo');
+      modoSel.value = L.contador_modo || 'ida_volta';
+      modoSel.addEventListener('change', async () => {
+        try { await run(sb.from('lojas').update({ contador_modo: modoSel.value }).eq('id', L.id)); L.contador_modo = modoSel.value; toast('Contador atualizado.'); }
+        catch (err) { toast(msgErro(err), 'erro'); modoSel.value = L.contador_modo || 'ida_volta'; }
+      });
+      const desenharContador = async () => {
+        const box = $('#contador-estado');
+        if (!box) return;
+        let c = null;
+        try { c = await run(sb.from('contadores').select('token, ultimo_sinal').eq('loja_id', L.id).maybeSingle()); } catch (err) { box.innerHTML = `<p class="small muted">${esc(msgErro(err))}</p>`; return; }
+        if (!c) {
+          box.innerHTML = `<p class="small"><span class="badge">Desligado</span></p><button class="btn prim" type="button" id="contador-ligar" style="margin-top:10px">Ligar o contador</button>`;
+          $('#contador-ligar', box).addEventListener('click', (e) => ocupado(e.currentTarget, async () => {
+            try { const t = await run(sb.rpc('gerar_codigo_contador', { p_loja: L.id })); folhaRobo(t); desenharContador(); } catch (err) { toast(msgErro(err), 'erro'); }
+          }));
+          return;
+        }
+        const sinal = c.ultimo_sinal ? new Date(c.ultimo_sinal) : null;
+        const recente = sinal && (Date.now() - sinal.getTime()) < 30 * 60 * 1000;
+        box.innerHTML = `<p class="small">${sinal ? `<span class="badge ${recente ? 'ok' : 'warn'}">${recente ? 'Funcionando' : 'Sem sinal recente'}</span> Último sinal do robô: <b>${fmtData(c.ultimo_sinal)} às ${fmtHora(c.ultimo_sinal)}</b>` : '<span class="badge warn">Esperando o robô</span> Ligue o robô no Gmail da câmera (veja o passo a passo).'}</p>
+          <div class="grid" style="grid-template-columns:1fr 1fr;margin-top:10px"><button class="btn" type="button" id="contador-robo">Passo a passo do robô</button><button class="btn" type="button" id="contador-trocar">Trocar código</button></div>`;
+        $('#contador-robo', box).addEventListener('click', () => folhaRobo(c.token));
+        $('#contador-trocar', box).addEventListener('click', async () => {
+          const ok = await confirmar('Trocar o código do robô?', { detalhe: 'O robô antigo para de funcionar. Você vai precisar colar o código novo no Google.', ok: 'Trocar' });
+          if (!ok) return;
+          try { const t = await run(sb.rpc('gerar_codigo_contador', { p_loja: L.id })); folhaRobo(t); desenharContador(); } catch (err) { toast(msgErro(err), 'erro'); }
+        });
+      };
+      desenharContador();
       $('#novo-vend').addEventListener('click', () => formVendedor(null, () => desenharVend(true)));
       desenharVend(true).catch((e) => { const b = $('#lista-vend'); if (b) b.innerHTML = `<p class="small muted">${esc(msgErro(e))}</p>`; });
     }

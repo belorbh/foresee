@@ -918,6 +918,69 @@ begin
   delete from despesas where modelo_id = d.modelo_id and competencia > d.competencia;
 end $$;
 
+-- ---------- Contador de pessoas (câmera na porta) ---------------------
+-- A câmera detecta pessoa na porta e manda um e-mail. Um robô grátis do Google (Apps Script)
+-- lê esses e-mails e chama registrar_entradas com o código secreto da loja.
+-- O banco guarda só o horário de cada passagem: nenhuma imagem.
+alter table public.lojas add column if not exists contador_modo text not null default 'ida_volta';
+do $$ begin
+  alter table public.lojas add constraint lojas_contador_modo_chk check (contador_modo in ('ida_volta', 'so_entrada'));
+exception when duplicate_object then null; end $$;
+
+create table if not exists public.contadores (
+  loja_id      uuid primary key references public.lojas(id) on delete cascade,
+  token        text not null unique,
+  ultimo_sinal timestamptz,
+  created_at   timestamptz not null default now()
+);
+
+create table if not exists public.entradas_loja (
+  id       bigint generated always as identity primary key,
+  loja_id  uuid not null references public.lojas(id) on delete cascade,
+  momento  timestamptz not null,
+  origem   text not null default 'camera',
+  unique (loja_id, momento, origem)
+);
+create index if not exists entradas_loja_momento_idx on public.entradas_loja (loja_id, momento);
+
+alter table public.contadores    enable row level security;
+alter table public.entradas_loja enable row level security;
+drop policy if exists contadores_ver on public.contadores;
+drop policy if exists entradas_ver   on public.entradas_loja;
+create policy contadores_ver on public.contadores    for select to authenticated using (public.eh_dono(loja_id));        -- o código secreto: só o dono
+create policy entradas_ver   on public.entradas_loja for select to authenticated using (public.eh_gerente(loja_id));     -- dono e gerente
+
+-- Gera (ou troca) o código secreto do robô. O código antigo para de funcionar.
+create or replace function public.gerar_codigo_contador(p_loja uuid)
+returns text language plpgsql security definer set search_path = public as $$
+declare t text := replace(gen_random_uuid()::text || gen_random_uuid()::text, '-', '');
+begin
+  if not eh_dono(p_loja) then raise exception 'Só o dono pode configurar o contador.'; end if;
+  insert into contadores (loja_id, token) values (p_loja, t)
+    on conflict (loja_id) do update set token = excluded.token;
+  return t;
+end $$;
+
+-- Chamado pelo robô (sem login): só aceita quem tem o código secreto da loja.
+create or replace function public.registrar_entradas(p_token text, p_momentos jsonb)
+returns integer language plpgsql security definer set search_path = public as $$
+declare c record; n integer;
+begin
+  if p_token is null or length(p_token) < 32 then raise exception 'Código do contador inválido.'; end if;
+  select * into c from contadores where token = p_token;
+  if not found then raise exception 'Código do contador inválido.'; end if;
+  if p_momentos is null or jsonb_typeof(p_momentos) <> 'array' then raise exception 'Lista de horários inválida.'; end if;
+  if jsonb_array_length(p_momentos) > 500 then raise exception 'Muitos registros de uma vez (máximo 500).'; end if;
+  insert into entradas_loja (loja_id, momento, origem)
+    select c.loja_id, (x #>> '{}')::timestamptz, 'camera'
+      from jsonb_array_elements(p_momentos) x
+     where (x #>> '{}')::timestamptz between now() - interval '14 days' and now() + interval '10 minutes'
+    on conflict do nothing;
+  get diagnostics n = row_count;
+  update contadores set ultimo_sinal = now() where loja_id = c.loja_id;
+  return n;
+end $$;
+
 -- ---------- Permissões -----------------------------------------------
 
 revoke all on all tables in schema public from anon;
@@ -927,3 +990,4 @@ grant select, insert, update, delete on all tables in schema public to service_r
 revoke execute on all functions in schema public from public;
 revoke execute on all functions in schema public from anon;
 grant execute on all functions in schema public to authenticated;
+grant execute on function public.registrar_entradas(text, jsonb) to anon;   -- o robô do contador entra sem login
