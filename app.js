@@ -379,7 +379,7 @@
     app.innerHTML = carregandoHTML(true);
     try {
       const membros = await run(sb.from('membros')
-        .select('loja_id, papel, nome, lojas(id, nome, cidade, telefone, instagram, meta_mensal, codigo_convite, contador_modo)')
+        .select('loja_id, papel, nome, lojas(id, nome, cidade, telefone, instagram, meta_mensal, codigo_convite)')
         .eq('user_id', S.user.id));
       S.membros = (membros || []).filter((m) => m.lojas);
       if (!S.membros.length) return telaBoasVindas();
@@ -759,8 +759,8 @@
       run(sb.from('clientes').select('origem, created_at').eq('loja_id', S.loja.id).gte('created_at', hoje.toISOString())),
       run(sb.from('vendas').select('id, numero, data, canal, cliente_id, vendedor_nome, vendedor_cad_id, comissao, subtotal, desconto, total, pecas, forma_pagamento, parcelas, status, observacao, clientes(nome, telefone)')
         .eq('loja_id', S.loja.id).gte('data', hoje.toISOString()).lt('data', addDias(hoje, 1).toISOString()).order('data', { ascending: false })),
-      gerente() ? run(sb.from('entradas_loja').select('momento').eq('loja_id', S.loja.id).gte('momento', addDias(hoje, -30).toISOString()).order('momento', { ascending: false }).limit(1)) : Promise.resolve([]),
-      gerente() ? run(sb.from('entradas_loja').select('momento').eq('loja_id', S.loja.id).gte('momento', hoje.toISOString()).lt('momento', addDias(hoje, 1).toISOString())) : Promise.resolve([]),
+      gerente() ? run(sb.from('entradas_loja').select('momento').eq('loja_id', S.loja.id).gte('momento', addDias(hoje, -30).toISOString()).order('momento', { ascending: false }).limit(1)).catch(() => []) : Promise.resolve([]),
+      gerente() ? run(sb.from('entradas_loja').select('momento').eq('loja_id', S.loja.id).gte('momento', hoje.toISOString()).lt('momento', addDias(hoje, 1).toISOString())).catch(() => []) : Promise.resolve([]),
       gerente() ? run(sb.from('lojas').select('contador_modo').eq('id', S.loja.id).maybeSingle()).catch(() => null) : Promise.resolve(null)
     ]);
     if (!vivo(token)) return;
@@ -2479,7 +2479,10 @@
         const box = $('#contador-estado');
         if (!box) return;
         let c = null;
-        try { c = await run(sb.from('contadores').select('token, ultimo_sinal').eq('loja_id', L.id).maybeSingle()); } catch (err) { box.innerHTML = `<p class="small muted">${esc(msgErro(err))}</p>`; return; }
+        try { c = await run(sb.from('contadores').select('token, ultimo_sinal').eq('loja_id', L.id).maybeSingle()); }
+        catch (err) { box.innerHTML = '<p class="small"><span class="badge warn">Em instalação</span> O contador ainda está sendo ativado no sistema. Volte aqui mais tarde.</p>'; modoSel.disabled = true; return; }
+        modoSel.disabled = false;
+        run(sb.from('lojas').select('contador_modo').eq('id', L.id).maybeSingle()).then((r) => { if (r && r.contador_modo) { L.contador_modo = r.contador_modo; modoSel.value = r.contador_modo; } }).catch(() => {});
         if (!c) {
           box.innerHTML = `<p class="small"><span class="badge">Desligado</span></p><button class="btn prim" type="button" id="contador-ligar" style="margin-top:10px">Ligar o contador</button>`;
           $('#contador-ligar', box).addEventListener('click', (e) => ocupado(e.currentTarget, async () => {
